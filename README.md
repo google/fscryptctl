@@ -29,6 +29,7 @@ providing a smaller and simpler interface. It only supports the minimal
 functionality required to use filesystem encryption.  It supports the following
 actions:
 *   Getting the key descriptor for a provided key
+*   Inserting a provided key into the keyring (with optional legacy flags)
 
 ## Building
 
@@ -40,14 +41,29 @@ Run `make` to build the executable `fscryptctl`. The only build dependencies are
 ## Running and Installing
 
 `fscryptctl` is a standalone binary, so it will not have any runtime
-dependencies. Installing it just requires placing it in your path or running
-`sudo make install` (set `DESTDIR` to install to a custom locations).
+dependencies. The kernel just needs to have support for the `keyctl()` and
+`add_key()` syscalls, which will be available on any kernel new enough to
+support filesystem encryption.
+
+Run `fscryptctl --help` to see the full usage and description of the available
+commands and flags. Installing the tool just requires placing it in your path or
+running `sudo make install` (set `DESTDIR` to install to a custom locations).
 
 ## Example Usage
 ```shell
-# Getting a key descriptor (where the key is 64 'c' bytes)
-> printf "%64s" | tr ' ' 'c' | ./fscryptctl get_descriptor
+# Make a key and store it in a file (where the key is 64 'c' bytes)
+> printf "%64s" | tr ' ' 'c' > key.data
+# Get the descriptor for the key
+> ./fscryptctl get_descriptor < key.data
 a8134316f6879ed4
+# Insert the key into the keyring (using legacy ext4 options)
+> ./fscryptctl insert_key --ext4 < key.data
+a8134316f6879ed4
+> keyctl show
+Session Keyring
+ 827244259 --alswrv  416424 65534  keyring: _uid_ses.416424
+ 111054036 --alswrv  416424 65534   \_ keyring: _uid.416424
+ 227138126 --alsw-v  416424  5000   \_ logon: ext4:a8134316f6879ed4
 ```
 
 ## Contributing
