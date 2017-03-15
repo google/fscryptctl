@@ -26,27 +26,40 @@ which add support for encryption.
 This tool aims to improve upon the work in
 [e4crypt](http://man7.org/linux/man-pages/man8/e4crypt.8.html) with `fscryptctl`
 providing a smaller and simpler interface. It only supports the minimal
-functionality required to use filesystem encryption.
+functionality required to use filesystem encryption.  It supports the following
+actions:
+*   Getting the key descriptor for a provided key
 
 ## Building
 
-TODO
+<!-- TODO: Change git clone URL before public release -->
+Get the source by running `git clone [REDACTED]`.
+Run `make` to build the executable `fscryptctl`. The only build dependencies are
+`make` and a C compiler.
 
 ## Running and Installing
 
-TODO
+`fscryptctl` is a standalone binary, so it will not have any runtime
+dependencies. Installing it just requires placing it in your path or running
+`sudo make install` (set `DESTDIR` to install to a custom locations).
 
 ## Example Usage
-
-TODO
-
-## Known Issues
-
-TODO
+```shell
+# Getting a key descriptor (where the key is 64 'c' bytes)
+> printf "%64s" | tr ' ' 'c' | ./fscryptctl get_descriptor
+a8134316f6879ed4
+```
 
 ## Contributing
 
-TODO
+If you are making changes to the fscryptctl component, the only additional
+command you will need is `make format` which formats all of the C code. This
+command should be run before committing any changes and requires `clang-format`
+to be installed (`sudo apt-get install clang-format`).
+
+## Known Issues
+
+None so far!
 
 ## License
 
