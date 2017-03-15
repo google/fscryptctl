@@ -30,6 +30,8 @@ functionality required to use filesystem encryption.  It supports the following
 actions:
 *   Getting the key descriptor for a provided key
 *   Inserting a provided key into the keyring (with optional legacy flags)
+*   Querying the encryption policy (i.e. key descriptor) for a file or directory
+*   Setting an encryption policy on a directory
 
 ## Building
 
@@ -41,9 +43,9 @@ Run `make` to build the executable `fscryptctl`. The only build dependencies are
 ## Running and Installing
 
 `fscryptctl` is a standalone binary, so it will not have any runtime
-dependencies. The kernel just needs to have support for the `keyctl()` and
-`add_key()` syscalls, which will be available on any kernel new enough to
-support filesystem encryption.
+dependencies. It just needs to have support for filesystem encryption and for
+the `keyctl()` and `add_key()` syscalls, which will be available on any kernel
+new enough to support filesystem encryption.
 
 Run `fscryptctl --help` to see the full usage and description of the available
 commands and flags. Installing the tool just requires placing it in your path or
@@ -64,6 +66,54 @@ Session Keyring
  827244259 --alswrv  416424 65534  keyring: _uid_ses.416424
  111054036 --alswrv  416424 65534   \_ keyring: _uid.416424
  227138126 --alsw-v  416424  5000   \_ logon: ext4:a8134316f6879ed4
+
+# Remove the key from the keyring
+> keyctl unlink 227138126
+# Make a test directory on a filesystem that supports encryption
+> mkdir /mnt/disks/encrypted/test
+# Setup an encryption policy on that directory
+> ./fscryptctl set_policy a8134316f6879ed4 /mnt/disks/encrypted/test
+> ./fscryptctl get_policy /mnt/disks/encrypted/test
+a8134316f6879ed4
+
+# We cannot create files in the directory without the key
+> echo "Hello World!" > /mnt/disks/encrypted/test/foo.txt
+An error occurred while redirecting file '/mnt/disks/encrypted/test/foo.txt'
+open: No such file or directory
+> ./fscryptctl insert_key --ext4 < key.data
+a8134316f6879ed4
+# Now we can make the file and write data to it
+> echo "Hello World!" > /mnt/disks/encrypted/test/foo.txt
+> ls -lA /mnt/disks/encrypted/test/
+total 4
+-rw-rw-r-- 1 joerichey joerichey 12 Mar 30 20:00 foo.txt
+> cat /mnt/disks/encrypted/test/foo.txt
+Hello World!
+
+# Now we remove the key, remount the filesystem, and see the encrypted data
+> keyctl show
+Session Keyring
+1047869403 --alswrv   1001  1002  keyring: _ses
+ 967765418 --alswrv   1001 65534   \_ keyring: _uid.1001
+1009690551 --alsw-v   1001  1002   \_ logon: ext4:a8134316f6879ed4
+> keyctl unlink 1009690551
+1 links removed
+> sudo umount /mnt/disks/encrypted
+> sudo mount /mnt/disks/encrypted
+> ls -lA /mnt/disks/encrypted/test/
+total 4
+-rw-rw-r-- 1 joerichey joerichey 13 Mar 30 20:00 wnJP+VX33Y6OSbN08+,jtQXK9yMHm8CFcI64CxDFPxL
+> cat /mnt/disks/encrypted/test/wnJP+VX33Y6OSbN08+,jtQXK9yMHm8CFcI64CxDFPxL
+cat: /mnt/disks/encrypted/test/wnJP+VX33Y6OSbN08+,jtQXK9yMHm8CFcI64CxDFPxL: Required key not available
+
+# Reinserting the key restores access to the data
+> ./fscryptctl insert_key --ext4 < key.data
+a8134316f6879ed4
+> ls -lA /mnt/disks/encrypted/test/
+total 4
+-rw-rw-r-- 1 joerichey joerichey 12 Mar 30 20:00 foo.txt
+> cat /mnt/disks/encrypted/test/foo.txt
+Hello World!
 ```
 
 ## Contributing
