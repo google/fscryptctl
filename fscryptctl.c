@@ -152,17 +152,26 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
 // For getting/setting policies, our error messages might differ from the
 // standard ones for certain errno values.
 const char *policy_error(int errno_val) {
-  // Only four errno values actually relate to filesystem encryption
-  if (errno_val == ENOTTY || errno_val == EOPNOTSUPP) {
-    return "Kernel or filesystem does not support encryption";
+  // Only these errno values actually relate to filesystem encryption
+  switch (errno_val) {
+    case ENOTTY:
+      return "your kernel is too old to support filesystem encryption, or the "
+             "filesystem you are using does not support encryption";
+    case EOPNOTSUPP:
+      return "filesystem encryption has been disabled in the kernel config, or "
+             "you need to enable encryption on your filesystem (see the README "
+             "for more detailed instructions).";
+    case ENODATA:
+      return "file or directory not encrypted";
+    case EEXIST:
+      // EINVAL was returned instead of EEXIST on some filesystems before v4.11.
+      // However, we do not attempt to work around this.
+      return "file or directory already encrypted";
+    case EINVAL:
+      return "invalid encryption options provided";
+    default:
+      return strerror(errno_val);
   }
-  if (errno_val == ENODATA) {
-    return "File or directory not encrypted";
-  }
-  if (errno_val == EINVAL) {
-    return "Invalid encryption options";
-  }
-  return strerror(errno_val);
 }
 
 // Converts str to an encryption mode. Returns 0 (FS_ENCRYPTION_MODE_INVALID) if

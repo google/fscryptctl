@@ -26,7 +26,7 @@ OBJECTS = $(NAME).o sha512.o
 .PHONY: default all clean format $(NAME)
 
 default: $(NAME)
-all: format $(NAME)
+all: format $(NAME) test
 
 $(NAME): $(OBJECTS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
@@ -34,10 +34,15 @@ $(NAME): $(OBJECTS)
 format:
 	@find . -name '*.c' -or -name '*.h' | xargs clang-format -style=Google -i
 
-install: $(TARGET)
+test: $(NAME)
+	@python -m pytest test.py -s -q
+
+install: $(NAME)
 	$(INSTALL) -d $(DEST_DIR)
 	$(INSTALL) $(NAME) $(DEST_DIR)
 
 clean:
 	rm -f $(OBJECTS)
 	rm -rf $(NAME)
+	rm -rf .cache
+	rm -rf __pycache__
