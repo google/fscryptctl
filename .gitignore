@@ -2,5 +2,4 @@ fscryptctl
 *.o
 .cache/
 __pycache__/
-fscryptctl.sublime-*
-Dockerfile
+

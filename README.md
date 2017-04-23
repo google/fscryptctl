@@ -1,13 +1,12 @@
 # fscryptctl
 
-<!-- TODO: Insert link to fscrypt when it is released -->
-`fscryptctl` is a low-level tool written in C that handles raw keys and manages
+fscryptctl is a low-level tool written in C that handles raw keys and manages
 policies for [Linux filesystem encryption](https://lwn.net/Articles/639427). For
 a tool that presents a higher level interface and manages metadata, key
 generation, key wrapping, PAM integration, and passphrase hashing, see
-`fscrypt` (not yet released).
+[fscrypt](https://github.com/google/fscrypt).
 
-To use `fscryptctl`, you must have a filesystem with encryption enabled and a
+To use fscryptctl, you must have a filesystem with encryption enabled and a
 kernel that supports reading/writing from that filesystem. Currently,
 [ext4](https://en.wikipedia.org/wiki/Ext4),
 [F2FS](https://en.wikipedia.org/wiki/F2FS), and
@@ -17,13 +16,12 @@ encryption. Ext4 has supported Linux filesystem encryption
 [added support in v4.2](https://lwn.net/Articles/649652), and UBIFS
 [added support in v4.10](https://lwn.net/Articles/707900). Note that only
 certain configurations of the Linux kernel enable encryption, and other
-filesystems may add support for encryption. See below for specific setup
-instructions for ext4 systems.
+filesystems may add support for encryption.
 
-Most of the testing for `fscryptctl` has been done with ext4 filesystems.
-However, the kernel uses a common userspace interface, so this tool should work
-with all existing and future filesystems which support for encryption. If there
-is a problem using `fscryptctl` with other filesystems, please open an issue.
+Most of the testing for fscrypt has been done with ext4 filesystems. However,
+the kernel uses a common userspace interface, so this tool should work with all
+existing and future filesystems which support encryption. If there is a problem
+using fscrypt with other filesystems, please open an issue.
 
 ### Other encryption solutions
 
@@ -32,7 +30,7 @@ encryption solutions: [eCryptfs](https://en.wikipedia.org/wiki/ECryptfs) and
 [dm-crypt](https://en.wikipedia.org/wiki/Dm-crypt).
 
 Currently, dm-crypt encrypts an entire block device with a single master key. If
-you do not need the fine-grained controls of `fscryptctl` or want to fully
+you do not need the fine-grained controls of fscryptctl or want to fully
 encrypt your filesystem metadata, dm-crypt could be a simpler choice.
 
 On the other hand, eCryptfs is another form of filesystem encryption on Linux;
@@ -41,7 +39,7 @@ top of an existing filesystem. This make eCryptfs an alternative choice if your
 filesystem or kernel does not support Linux filesystem encryption or you do not
 want to modify your existing filesystem.
 
-Also note that `fscryptctl` does not support or setup either eCryptfs or
+Also note that fscryptctl does not support or setup either eCryptfs or
 dm-crypt. For these tools, use
 [ecryptfs-utils](https://packages.debian.org/source/jessie/ecryptfs-utils) for
 eCryptfs or [cryptsetup](https://linux.die.net/man/8/cryptsetup) for dm-crypt.
@@ -49,7 +47,7 @@ eCryptfs or [cryptsetup](https://linux.die.net/man/8/cryptsetup) for dm-crypt.
 ## Features
 
 This tool aims to improve upon the work in
-[e4crypt](http://man7.org/linux/man-pages/man8/e4crypt.8.html) with `fscryptctl`
+[e4crypt](http://man7.org/linux/man-pages/man8/e4crypt.8.html) with fscryptctl
 providing a smaller and simpler interface. It only supports the minimal
 functionality required to use filesystem encryption.  It supports the following
 actions:
@@ -60,14 +58,13 @@ actions:
 
 ## Building
 
-<!-- TODO: Change git clone URL before public release -->
-Get the source by running `git clone [REDACTED]`.
-Run `make` to build the executable `fscryptctl`. The only build dependencies are
+Get the source by running `git clone https://github.com/google/fscryptctl`.
+Run `make` to build the executable fscryptctl. The only build dependencies are
 `make` and a C compiler.
 
 ## Running and Installing
 
-`fscryptctl` is a standalone binary, so it just needs to have support for
+fscryptctl is a standalone binary, so it just needs to have support for
 filesystem encryption and for the `keyctl()` and `add_key()` syscalls to exist,
 which they will be available on any kernel which supports filesystem encryption.
 
@@ -142,12 +139,11 @@ Hello World!
 
 ## Contributing
 
-We would love to accept your contributions to `fscryptctl`. See the
+We would love to accept your contributions to fscryptctl. See the
 `CONTRIBUTING.md` file for more information about singing the CLA and submitting
 a pull request.
 
 ## Known Issues
-
 
 #### Getting "filesystem encryption has been disabled" on an ext4 filesystem.
 
