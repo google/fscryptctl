@@ -65,6 +65,8 @@ struct fscrypt_key {
 #define FS_ENCRYPTION_MODE_AES_256_GCM 2
 #define FS_ENCRYPTION_MODE_AES_256_CBC 3
 #define FS_ENCRYPTION_MODE_AES_256_CTS 4
+#define FS_ENCRYPTION_MODE_AES_128_CBC 5
+#define FS_ENCRYPTION_MODE_AES_128_CTS 6
 
 // Policy provided via an ioctl on the topmost directory
 struct fscrypt_policy {
@@ -101,9 +103,9 @@ key_serial_t keyctl_get_keyring_ID(key_serial_t id, int create) {
 /* End <keyutils.h> */
 
 // Human-readable strings for encryption modes, indexed by the encryption mode
-#define NUM_ENCRYPTION_MODES 5
+#define NUM_ENCRYPTION_MODES 7
 const char *const mode_strings[NUM_ENCRYPTION_MODES] = {
-    "INVALID", "AES-256-XTS", "AES-256-GCM", "AES-256-CBC", "AES-256-CTS"};
+    "INVALID", "AES-256-XTS", "AES-256-GCM", "AES-256-CBC", "AES-256-CTS", "AES-128-CBC", "AES-128-CTS"};
 
 // Valid amounts of filename padding, indexed by the padding flag
 #define NUM_PADDING_VALUES 4
