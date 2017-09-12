@@ -95,8 +95,12 @@ Session Keyring
 # Setup an encryption policy on that directory
 > ./fscryptctl set_policy a8134316f6879ed4 /mnt/disks/encrypted/test
 > ./fscryptctl get_policy /mnt/disks/encrypted/test
-a8134316f6879ed4
-
+Encryption policy for /mnt/disks/encrypted/test:
+        Policy Version: 0
+        Key Descriptor: a8134316f6879ed4
+        Contents: AES-256-XTS
+        Filenames: AES-256-CTS
+        Padding: 32
 # We cannot create files in the directory without the key
 > echo "Hello World!" > /mnt/disks/encrypted/test/foo.txt
 An error occurred while redirecting file '/mnt/disks/encrypted/test/foo.txt'
