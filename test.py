@@ -30,12 +30,14 @@ test_data = "some test file data"
 #       | xxd -r -p
 #       | sha512sum --binary
 #       | head --bytes=16
-test_key = b'a' * key_length
-test_descriptor = b'0394a446f8eaa61f'
+
+kl = key_length/2
+test_key = (b'a' * kl) + (b'1' * kl)
+test_descriptor = b'e355a76a11a1be18'
 key_tests = [
     (test_key, test_descriptor),
-    (b'b' * key_length, b'904a9ca97689ad11'),
-    (b'c' * key_length, b'a8134316f6879ed4'),
+    ((b'b' * kl) + (b'c' * kl), b'af6772415baa0732'),
+    ((b'3' * kl) + (b'd' * kl), b'53f4299e3ad10963'),
 ]
 
 
