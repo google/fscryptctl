@@ -132,6 +132,8 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "\nOptions:\n"
       "    -h, --help\n"
       "        print this help screen\n"
+      "    -v, --version\n"
+      "        print the version of fscrypt\n"
       "    insert_key\n"
       "        --ext4\n"
       "            for use with an ext4 filesystem before kernel v4.8\n"
@@ -515,6 +517,10 @@ int main(int argc, char *const argv[]) {
   for (i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       usage(stdout);
+    }
+    if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
+      puts(VERSION);
+      return EXIT_SUCCESS;
     }
   }
 

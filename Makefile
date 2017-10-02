@@ -64,7 +64,7 @@ sha512.o: sha512.h sha512.c
 	$(CC) $(CFLAGS) sha512.c -c -o $@
 
 $(NAME).o: $(NAME).c sha512.h
-	$(CC) $(CFLAGS) -DVERSION="$(VERSION)" $(NAME).c -c -o $@
+	$(CC) $(CFLAGS) -DVERSION="\"$(VERSION)\"" $(NAME).c -c -o $@
 
 $(NAME): $(NAME).o sha512.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
