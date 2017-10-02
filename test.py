@@ -19,7 +19,7 @@ import keyutils
 import pytest
 import os
 
-key_length = 64
+key_length = 64 # 512 bit keys
 test_env_var = "TEST_FILESYSTEM_ROOT"
 test_data = "some test file data"
 
@@ -30,12 +30,15 @@ test_data = "some test file data"
 #       | xxd -r -p
 #       | sha512sum --binary
 #       | head --bytes=16
-test_key = b'a' * key_length
-test_descriptor = b'0394a446f8eaa61f'
+
+# The first and second groups of 256 bits must be different.
+half_length = key_length/2
+test_key = (b'a' * half_length) + (b'1' * half_length)
+test_descriptor = b'e355a76a11a1be18'
 key_tests = [
     (test_key, test_descriptor),
-    (b'b' * key_length, b'904a9ca97689ad11'),
-    (b'c' * key_length, b'a8134316f6879ed4'),
+    ((b'b' * half_length) + (b'2' * half_length), b'89bb6950c691e91a'),
+    ((b'c' * half_length) + (b'3' * half_length), b'338561500b313743'),
 ]
 
 
@@ -62,12 +65,20 @@ def invoke(binary_path, stdin, *args):
 
     return first_line(stdout)
 
+def device(mountpoint):
+    """ Returns the device of a mountpoint. """
+    from subprocess import check_output
+    for line in check_output(['mount', '-l']).split('\n'):
+        parts = line.split()
+        if len(parts) > 2 and parts[2] == mountpoint:
+            return parts[0]
+    raise SystemError("No device for: " + mountpoint)
 
 def remount(mountpoint):
-    """ Tries to unmount and mount the filesystem at mountpoint. """
+    """ Remounts the filesystem and clears the inode cache. """
+    dev = device(mountpoint)
     invoke("umount", "", mountpoint)
-    invoke("mount", "", mountpoint)
-
+    invoke("mount", "", "-t", "ext4", dev, mountpoint)
 
 def write_file(path):
     """ writes some sample data to the file at path """
