@@ -5,6 +5,13 @@ compiler:
   - clang
   - gcc
 
+addons:
+  apt:
+    sources:
+      - sourceline: 'deb http://en.archive.ubuntu.com/ubuntu/ artful main universe'
+    packages:
+      - e2fsprogs
+
 install:
   - sudo make travis-install
 
