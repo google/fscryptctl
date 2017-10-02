@@ -74,30 +74,30 @@ running `sudo make install` (set `DESTDIR` to install to a custom locations).
 
 ## Example Usage
 ```shell
-# Make a key and store it in a file (where the key is 64 'c' bytes)
-> printf "%64s" | tr ' ' 'c' > key.data
+# Make a random 512-bit key and store it in a file
+> dd if=/dev/urandom of=key.data count=64 bs=1
 # Get the descriptor for the key
 > ./fscryptctl get_descriptor < key.data
-a8134316f6879ed4
+cd8c77009a9a3e6d
 # Insert the key into the keyring (using legacy ext4 options)
 > ./fscryptctl insert_key --ext4 < key.data
-a8134316f6879ed4
+cd8c77009a9a3e6d
 > keyctl show
 Session Keyring
  827244259 --alswrv  416424 65534  keyring: _uid_ses.416424
  111054036 --alswrv  416424 65534   \_ keyring: _uid.416424
- 227138126 --alsw-v  416424  5000   \_ logon: ext4:a8134316f6879ed4
+ 227138126 --alsw-v  416424  5000   \_ logon: ext4:cd8c77009a9a3e6d
 
 # Remove the key from the keyring
 > keyctl unlink 227138126
 # Make a test directory on a filesystem that supports encryption
 > mkdir /mnt/disks/encrypted/test
 # Setup an encryption policy on that directory
-> ./fscryptctl set_policy a8134316f6879ed4 /mnt/disks/encrypted/test
+> ./fscryptctl set_policy cd8c77009a9a3e6d /mnt/disks/encrypted/test
 > ./fscryptctl get_policy /mnt/disks/encrypted/test
 Encryption policy for /mnt/disks/encrypted/test:
         Policy Version: 0
-        Key Descriptor: a8134316f6879ed4
+        Key Descriptor: cd8c77009a9a3e6d
         Contents: AES-256-XTS
         Filenames: AES-256-CTS
         Padding: 32
@@ -106,7 +106,7 @@ Encryption policy for /mnt/disks/encrypted/test:
 An error occurred while redirecting file '/mnt/disks/encrypted/test/foo.txt'
 open: No such file or directory
 > ./fscryptctl insert_key --ext4 < key.data
-a8134316f6879ed4
+cd8c77009a9a3e6d
 # Now we can make the file and write data to it
 > echo "Hello World!" > /mnt/disks/encrypted/test/foo.txt
 > ls -lA /mnt/disks/encrypted/test/
@@ -120,7 +120,7 @@ Hello World!
 Session Keyring
 1047869403 --alswrv   1001  1002  keyring: _ses
  967765418 --alswrv   1001 65534   \_ keyring: _uid.1001
-1009690551 --alsw-v   1001  1002   \_ logon: ext4:a8134316f6879ed4
+1009690551 --alsw-v   1001  1002   \_ logon: ext4:cd8c77009a9a3e6d
 > keyctl unlink 1009690551
 1 links removed
 > umount /mnt/disks/encrypted
@@ -133,7 +133,7 @@ cat: /mnt/disks/encrypted/test/wnJP+VX33Y6OSbN08+,jtQXK9yMHm8CFcI64CxDFPxL: Requ
 
 # Reinserting the key restores access to the data
 > ./fscryptctl insert_key --ext4 < key.data
-a8134316f6879ed4
+cd8c77009a9a3e6d
 > ls -lA /mnt/disks/encrypted/test/
 total 4
 -rw-rw-r-- 1 joerichey joerichey 12 Mar 30 20:00 foo.txt
