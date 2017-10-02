@@ -105,7 +105,8 @@ key_serial_t keyctl_get_keyring_ID(key_serial_t id, int create) {
 // Human-readable strings for encryption modes, indexed by the encryption mode
 #define NUM_ENCRYPTION_MODES 7
 const char *const mode_strings[NUM_ENCRYPTION_MODES] = {
-    "INVALID", "AES-256-XTS", "AES-256-GCM", "AES-256-CBC", "AES-256-CTS", "AES-128-CBC", "AES-128-CTS"};
+    "INVALID",     "AES-256-XTS", "AES-256-GCM", "AES-256-CBC",
+    "AES-256-CTS", "AES-128-CBC", "AES-128-CTS"};
 
 // Valid amounts of filename padding, indexed by the padding flag
 #define NUM_PADDING_VALUES 4
