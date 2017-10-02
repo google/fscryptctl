@@ -11,6 +11,10 @@ addons:
       - sourceline: 'deb http://en.archive.ubuntu.com/ubuntu/ artful main universe'
     packages:
       - e2fsprogs
+      - python-pytest
+      - python-keyutils
+      - clang
+      - clang-format
 
 install:
   - sudo make travis-install
