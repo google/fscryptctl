@@ -110,7 +110,7 @@ clean:
 .PHONY: test-setup test-teardown
 test-setup: root
 	dd if=/dev/zero of=$(IMAGE) bs=1M count=20
-	mkfs.ext4 -b 4096 -O encrypt $(IMAGE) -F
+	mkfs.ext4 -b 4096 -O encrypt -F $(IMAGE)
 	mkdir -p $(MOUNT)
 	mount -o rw,loop,user $(IMAGE) $(MOUNT)
 	chmod +777 $(MOUNT)
