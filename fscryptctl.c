@@ -132,10 +132,8 @@ static void handle_no_options(int *argc, char *const *argv[]) {
   *argv += optind;
 }
 
-// For getting/setting policies, our error messages might differ from the
-// standard ones for certain errno values.
-const char *policy_error(int errno_val) {
-  // Only these errno values actually relate to filesystem encryption
+// Describes common error codes for the fscrypt ioctls.
+static const char *describe_fscrypt_error(int errno_val) {
   switch (errno_val) {
     case ENOTTY:
       return "your kernel is too old to support filesystem encryption, or the "
@@ -144,14 +142,33 @@ const char *policy_error(int errno_val) {
       return "filesystem encryption has been disabled in the kernel config, or "
              "you need to enable encryption on your filesystem (see the README "
              "for more detailed instructions).";
+    default:
+      return strerror(errno_val);
+  }
+}
+
+// Describes the error codes for the FS_IOC_GET_ENCRYPTION_POLICY{,_EX} ioctls.
+static const char *describe_get_policy_error(int errno_val) {
+  switch (errno_val) {
     case ENODATA:
       return "file or directory not encrypted";
+    case EINVAL:
+    case EOVERFLOW:
+      return "file or directory uses an unrecognized encryption policy version";
+    default:
+      return describe_fscrypt_error(errno_val);
+  }
+}
+
+// Describes the error codes for the FS_IOC_SET_ENCRYPTION_POLICY ioctl.
+static const char *describe_set_policy_error(int errno_val) {
+  switch (errno_val) {
     case EEXIST:
       return "file or directory already encrypted";
     case EINVAL:
       return "invalid encryption options provided";
     default:
-      return strerror(errno_val);
+      return describe_fscrypt_error(errno_val);
   }
 }
 
@@ -287,7 +304,7 @@ static bool get_policy(const char *path,
 
   if (ret != 0) {
     fprintf(stderr, "error: getting policy for %s: %s\n", path,
-            policy_error(errno));
+            describe_get_policy_error(errno));
     return false;
   }
   return true;
@@ -312,7 +329,7 @@ static bool set_policy(const char *path, const union fscrypt_policy *policy) {
 
   if (ret != 0) {
     fprintf(stderr, "error: setting policy for %s: %s\n", path,
-            policy_error(errno));
+            describe_set_policy_error(errno));
     return false;
   }
   return true;
