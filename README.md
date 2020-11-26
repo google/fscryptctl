@@ -1,190 +1,170 @@
 # fscryptctl
 
-fscryptctl is a low-level tool written in C that handles raw keys and manages
-policies for [Linux filesystem encryption](https://lwn.net/Articles/639427). For
-a tool that presents a higher level interface and manages metadata, key
-generation, key wrapping, PAM integration, and passphrase hashing, see
-[fscrypt](https://github.com/google/fscrypt).
+`fscryptctl` is a low-level tool written in C that handles raw keys and manages
+policies for [Linux filesystem
+encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html),
+specifically the "fscrypt" kernel interface which is supported by the ext4,
+f2fs, and UBIFS filesystems.
 
-To use fscryptctl, you must have a filesystem with encryption enabled and a
-kernel that supports reading/writing from that filesystem. Currently,
-[ext4](https://en.wikipedia.org/wiki/Ext4),
-[F2FS](https://en.wikipedia.org/wiki/F2FS), and
-[UBIFS](https://en.wikipedia.org/wiki/UBIFS) support Linux filesystem
-encryption. Ext4 has supported Linux filesystem encryption
-[since v4.1](https://lwn.net/Articles/639427), F2FS
-[added support in v4.2](https://lwn.net/Articles/649652), and UBIFS
-[added support in v4.10](https://lwn.net/Articles/707900). Note that only
-certain configurations of the Linux kernel enable encryption, and other
-filesystems may add support for encryption.
+`fscryptctl` is mainly intended for embedded systems which can't use the
+full-featured [`fscrypt` tool](https://github.com/google/fscrypt), or for
+testing or experimenting with the kernel interface to Linux filesystem
+encryption.  `fscryptctl` does *not* handle key generation, key stretching, key
+wrapping, or PAM integration.  Most users should use the `fscrypt` tool instead,
+which supports these features and generally is much easier to use.
 
-Most of the testing for fscrypt has been done with ext4 filesystems. However,
-the kernel uses a common userspace interface, so this tool should work with all
-existing and future filesystems which support encryption. If there is a problem
-using fscrypt with other filesystems, please open an issue.
+As `fscryptctl` is intended for advanced users, you should read the [kernel
+documentation for filesystem
+encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html)
+before using `fscryptctl`.
 
-### Other encryption solutions
+## Table of Contents
 
-It is important to distinguish Linux filesystem encryption from two other
-encryption solutions: [eCryptfs](https://en.wikipedia.org/wiki/ECryptfs) and
-[dm-crypt](https://en.wikipedia.org/wiki/Dm-crypt).
+- [Building and Installing](#building-and-installing)
+- [Runtime Dependencies](#runtime-dependencies)
+- [Features](#features)
+- [Example Usage](#example-usage)
+- [Contributing](#contributing)
+- [Legal](#legal)
 
-Currently, dm-crypt encrypts an entire block device with a single master key. If
-you do not need the fine-grained controls of fscryptctl or want to fully
-encrypt your filesystem metadata, dm-crypt could be a simpler choice.
+## Building and Installing
 
-On the other hand, eCryptfs is another form of filesystem encryption on Linux;
-it encrypts a filesystem directory with some key or passphrase. eCryptfs sits on
-top of an existing filesystem. This make eCryptfs an alternative choice if your
-filesystem or kernel does not support Linux filesystem encryption or you do not
-want to modify your existing filesystem.
+To build `fscryptctl`, run `make`.  The only build dependencies are GNU Make and
+a C compiler.
 
-Also note that fscryptctl does not support or setup either eCryptfs or
-dm-crypt. For these tools, use
-[ecryptfs-utils](https://packages.debian.org/source/jessie/ecryptfs-utils) for
-eCryptfs or [cryptsetup](https://linux.die.net/man/8/cryptsetup) for dm-crypt.
+To install `fscryptctl`, run `sudo make install`.
+
+See the `Makefile` for compilation and installation options.
+
+## Runtime Dependencies
+
+`fscryptctl` doesn't link to any libraries (other than libc), so its only
+runtime dependencies are the kernel and filesystem support for encryption.  In
+most cases that means the kernel must have been built `CONFIG_FS_ENCRYPTION=y`,
+and a command like `tune2fs -O encrypt` must have been run on the filesystem.
+For more information about the kernel and filesystem prerequisites, see the
+[`fscrypt`
+documentation](https://github.com/google/fscrypt#runtime-dependencies),
+including the [troubleshooting
+tips](https://github.com/google/fscrypt#getting-encryption-not-enabled-on-an-ext4-filesystem).
 
 ## Features
 
-This tool aims to improve upon the work in
-[e4crypt](http://man7.org/linux/man-pages/man8/e4crypt.8.html) with fscryptctl
-providing a smaller and simpler interface. It only supports the minimal
-functionality required to use filesystem encryption.  It supports the following
-actions:
-*   Getting the key descriptor for a provided key
-*   Inserting a provided key into the keyring (with optional legacy flags)
-*   Querying the encryption policy (i.e. key descriptor) for a file or directory
-*   Setting an encryption policy on a directory
+`fscryptctl` has the following commands:
 
-## Building
+* `fscryptctl add_key` - add an encryption key to a filesystem
+* `fscryptctl remove_key` - remove an encryption key from a filesystem
+* `fscryptctl key_status` - get the status of an encryption key on a filesystem
+* `fscryptctl get_policy` - get the encryption policy of a file or directory
+* `fscryptctl set_policy` - set the encryption policy of an empty directory
 
-Get the source by running `git clone https://github.com/google/fscryptctl`.
-Run `make` to build the executable fscryptctl. The only build dependencies are
-`make` and a C compiler.
+There are also two deprecated commands:
 
-## Running and Installing
+* `fscryptctl insert_key` - add a v1 policy key to the session keyring
+* `fscryptctl get_descriptor` - compute key descriptor for a v1 policy key
 
-fscryptctl is a standalone binary, so it just needs to have support for
-filesystem encryption and for the `keyctl()` and `add_key()` syscalls to exist,
-which they will be available on any kernel which supports filesystem encryption.
+Run `fscryptctl --help` for full usage details.
 
-Run `fscryptctl --help` to see the full usage and description of the available
-commands and flags. Installing the tool just requires placing it in your path or
-running `sudo make install` (set `DESTDIR` to install to a custom locations).
+The `add_key` and `insert_key` commands accept the encryption key in binary on
+standard input.  It is critical that this be a real cryptographic key (and not a
+passphrase, for example), since `fscryptctl` doesn't do key stretching itself.
+Obviously, don't store the raw encryption key alongside the encrypted files.
+(If you need support for passphrases, use `fscrypt` instead of `fscryptctl`.)
+
+`fscryptctl` supports both v1 and v2 encryption policies.  (An "encryption
+policy" refers to the way in which a directory is encrypted: a reference to a
+key, plus the encryption options.)  v2 encryption policies are supported by
+kernel 5.4 and later, and they should be used whenever possible, since they have
+various security and usability improvements over v1.  See the [kernel
+documentation](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html#limitations-of-v1-policies)
+for more details.
+
+From the `fscryptctl` user's perspective, v1 and v2 policies differ primarily in
+how encryption keys are managed.  Keys for v1 policies are placed into the Linux
+session keyring by `fscryptctl insert_key` and are identified by 16-character
+"key descriptors".  Keys for v2 policies are placed in a filesystem keyring
+using `fscryptctl add_key` and are identified by 32-character "key identifiers".
+
+`fscryptctl set_policy` accepts either a key descriptor, in which case it sets a
+v1 policy, or a key identifier, in which case it sets a v2 policy.  So
+effectively, `fscryptctl set_policy` will set a v1 policy if `fscryptctl
+insert_key` was used, or a v2 policy if `fscryptctl add_key` was used.
 
 ## Example Usage
+
 ```shell
-# Make a random 512-bit key and store it in a file
-> dd if=/dev/urandom of=key.data count=64 bs=1
-# Get the descriptor for the key
-> ./fscryptctl get_descriptor < key.data
-cd8c77009a9a3e6d
-# Insert the key into the keyring (using legacy ext4 options)
-> ./fscryptctl insert_key --ext4 < key.data
-cd8c77009a9a3e6d
-> keyctl show
-Session Keyring
- 827244259 --alswrv  416424 65534  keyring: _uid_ses.416424
- 111054036 --alswrv  416424 65534   \_ keyring: _uid.416424
- 227138126 --alsw-v  416424  5000   \_ logon: ext4:cd8c77009a9a3e6d
+# Create and mount an ext4 filesystem that supports encryption.
+# (Alternatively, use `tune2fs -O encrypt` on an existing ext4 filesystem.)
+# (For f2fs, use `mkfs.f2fs -O encrypt` or `fsck.f2fs -O encrypt`.)
+> mkfs.ext4 -O encrypt /dev/vdb
+> mount /dev/vdb /mnt
 
-# Remove the key from the keyring
-> keyctl unlink 227138126
-# Make a test directory on a filesystem that supports encryption
-> mkdir /mnt/disks/encrypted/test
-# Setup an encryption policy on that directory
-> ./fscryptctl set_policy cd8c77009a9a3e6d /mnt/disks/encrypted/test
-> ./fscryptctl get_policy /mnt/disks/encrypted/test
-Encryption policy for /mnt/disks/encrypted/test:
-        Policy Version: 0
-        Key Descriptor: cd8c77009a9a3e6d
-        Contents: AES-256-XTS
-        Filenames: AES-256-CTS
-        Padding: 32
-# We cannot create files in the directory without the key
-> echo "Hello World!" > /mnt/disks/encrypted/test/foo.txt
-An error occurred while redirecting file '/mnt/disks/encrypted/test/foo.txt'
-open: No such file or directory
-> ./fscryptctl insert_key --ext4 < key.data
-cd8c77009a9a3e6d
-# Now we can make the file and write data to it
-> echo "Hello World!" > /mnt/disks/encrypted/test/foo.txt
-> ls -lA /mnt/disks/encrypted/test/
-total 4
--rw-rw-r-- 1 joerichey joerichey 12 Mar 30 20:00 foo.txt
-> cat /mnt/disks/encrypted/test/foo.txt
-Hello World!
+# Generate a random 512-bit key and store it in a file.
+> head -c 64 /dev/urandom > /tmp/key
 
-# Now we remove the key, remount the filesystem, and see the encrypted data
-> keyctl show
-Session Keyring
-1047869403 --alswrv   1001  1002  keyring: _ses
- 967765418 --alswrv   1001 65534   \_ keyring: _uid.1001
-1009690551 --alsw-v   1001  1002   \_ logon: ext4:cd8c77009a9a3e6d
-> keyctl unlink 1009690551
-1 links removed
-> umount /mnt/disks/encrypted
-> mount /mnt/disks/encrypted
-> ls -lA /mnt/disks/encrypted/test/
-total 4
--rw-rw-r-- 1 joerichey joerichey 13 Mar 30 20:00 wnJP+VX33Y6OSbN08+,jtQXK9yMHm8CFcI64CxDFPxL
-> cat /mnt/disks/encrypted/test/wnJP+VX33Y6OSbN08+,jtQXK9yMHm8CFcI64CxDFPxL
-cat: /mnt/disks/encrypted/test/wnJP+VX33Y6OSbN08+,jtQXK9yMHm8CFcI64CxDFPxL: Required key not available
+# Add the key to the filesystem.
+> fscryptctl add_key /mnt < /tmp/key
+f12fccad977328d20a16c79627787a1c
 
-# Reinserting the key restores access to the data
-> ./fscryptctl insert_key --ext4 < key.data
-cd8c77009a9a3e6d
-> ls -lA /mnt/disks/encrypted/test/
-total 4
--rw-rw-r-- 1 joerichey joerichey 12 Mar 30 20:00 foo.txt
-> cat /mnt/disks/encrypted/test/foo.txt
-Hello World!
+# Get the status of the key on the filesystem.
+> fscryptctl key_status f12fccad977328d20a16c79627787a1c /mnt
+Present (user_count=1, added_by_self)
+
+# Create an encrypted directory that uses the key.
+> fscryptctl set_policy f12fccad977328d20a16c79627787a1c /mnt/dir
+
+# Show the directory's encryption policy that was just set.
+> fscryptctl get_policy /mnt/dir
+Encryption policy for /mnt/dir:
+        Policy version: 2
+        Master key identifier: f12fccad977328d20a16c79627787a1c
+        Contents encryption mode: AES-256-XTS
+        Filenames encryption mode: AES-256-CTS
+        Flags: PAD_32
+
+# Create some files in the encrypted directory.
+> echo foo > /mnt/dir/foo
+> mkdir /mnt/dir/bar
+
+# Remove the encryption key from the filesystem.
+# (Alternatively, unmounting the filesystem will remove the key too.)
+> fscryptctl remove_key f12fccad977328d20a16c79627787a1c /mnt
+
+# Get the status of the key on the filesystem.
+> fscryptctl key_status f12fccad977328d20a16c79627787a1c /mnt
+Absent
+
+# The directory is now locked.  So the filenames are shown in encrypted form,
+# and files can't be opened or created.
+> ls /mnt/dir
+AcbnATV97HZzxlmWNoErWS8QkdgTzMzbPU5hjs7XwvyralC5fQCtQA
+qXT50ks2,3RzC8kqJ5FvnHgxS6oL2UDa8nsVkCFmoUQQygA3nWzxfA
+> cat /mnt/dir/qXT50ks2,3RzC8kqJ5FvnHgxS6oL2UDa8nsVkCFmoUQQygA3nWzxfA
+cat: /mnt/dir/qXT50ks2,3RzC8kqJ5FvnHgxS6oL2UDa8nsVkCFmoUQQygA3nWzxfA: Required key not available
+> mkdir /mnt/dir/foobar
+mkdir: cannot create directory ‘/mnt/dir/foobar’: Required key not available
+
+# Re-adding the key restores access to the files.
+> fscryptctl add_key /mnt < /tmp/key
+f12fccad977328d20a16c79627787a1c
+> ls /mnt/dir
+bar foo
+> cat /mnt/dir/foo
+foo
 ```
 
 ## Contributing
 
-We would love to accept your contributions to fscryptctl. See the
-`CONTRIBUTING.md` file for more information about singing the CLA and submitting
-a pull request.
-
-## Known Issues
-
-#### Getting "filesystem encryption has been disabled" on an ext4 filesystem.
-
-Getting this error on an ext4 system usually means the filesystem has not been
-setup for encryption. To setup a filesystem to support encryption, first check
-that your block size is equal to your page size by comparing the outputs of
-`getconf PAGE_SIZE` and `tune2fs -l /dev/device | grep 'Block size'`. If these
-are not the same, DO NOT ENABLE ENCRYPTION.
-
-To turn on the encryption feature flag for your filesystem, run
-```
-tune2fs -O encrypt /dev/device
-```
-This command may require root privileges. Once the flag is enabled, older
-kernels may not be able to mount the filesystem. Note that there was a bug in an
-older kernel version that allowed encryption policies to be set on ext4
-filesystems without enabling this encryption feature flag.
-
-#### Files are still visible in plaintext after encryption key is removed.
-
-This is an issue with how the Linux kernel implements filesystem encryption. The
-plaintext is still cached even after the key is removed. To clear these caches
-after removing the appropriate key, either unmount and remount the filesystem,
-or run:
-```bash
-echo 3 | sudo tee /proc/sys/vm/drop_caches
-```
-There used to be kernel functionality to "lock" files after their keys had been
-removed. However, [this was removed](https://patchwork.kernel.org/patch/9585865)
-because the implementation was insecure and buggy.
+We would love to accept your contributions to `fscryptctl`.  See the
+`CONTRIBUTING.md` file for more information.
 
 ## Legal
 
-Copyright 2017 Google Inc. under the
+Copyright 2017, 2020 Google LLC.  Licensed under the
 [Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0); see the
 `LICENSE` file for more information.
 
-Author: Joe Richey <joerichey@google.com>
+Authors: Joe Richey (joerichey@google.com),
+         Eric Biggers (ebiggers@google.com)
 
 This is not an official Google product.
