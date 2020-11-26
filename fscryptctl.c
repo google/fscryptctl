@@ -38,7 +38,9 @@
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
-#define FS_KEY_DESCRIPTOR_HEX_SIZE ((2 * FS_KEY_DESCRIPTOR_SIZE) + 1)
+#define FSCRYPT_MODE_INVALID 0
+
+#define FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE ((2 * FSCRYPT_KEY_DESCRIPTOR_SIZE) + 1)
 
 // Service prefixes for encryption keys
 #define EXT4_KEY_DESC_PREFIX "ext4:"  // For ext4 before 4.8 kernel
@@ -120,8 +122,8 @@ const char *policy_error(int errno_val) {
   }
 }
 
-// Converts str to an encryption mode. Returns 0 (FS_ENCRYPTION_MODE_INVALID) if
-// the string does not correspond to an encryption mode.
+// Converts str to an encryption mode. Returns 0 (FSCRYPT_MODE_INVALID) if the
+// string does not correspond to an encryption mode.
 static uint8_t string_to_mode(const char *str) {
   uint8_t i;
   for (i = 1; i < ARRAY_SIZE(mode_strings); i++) {
@@ -154,10 +156,11 @@ static int string_to_padding_flag(const char *str) {
 }
 
 // Takes an input key descriptor as a byte array and outputs a hex string.
-static void key_descriptor_to_hex(const uint8_t bytes[FS_KEY_DESCRIPTOR_SIZE],
-                                  char hex[FS_KEY_DESCRIPTOR_HEX_SIZE]) {
+static void key_descriptor_to_hex(
+    const uint8_t bytes[FSCRYPT_KEY_DESCRIPTOR_SIZE],
+    char hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
   int i;
-  for (i = 0; i < FS_KEY_DESCRIPTOR_SIZE; ++i) {
+  for (i = 0; i < FSCRYPT_KEY_DESCRIPTOR_SIZE; ++i) {
     sprintf(hex + 2 * i, "%02x", bytes[i]);
   }
 }
@@ -165,13 +168,13 @@ static void key_descriptor_to_hex(const uint8_t bytes[FS_KEY_DESCRIPTOR_SIZE],
 // Takes an input key descriptor as a hex string and outputs a bytes array.
 // Returns non-zero if the provided hex string is not formatted correctly.
 static int key_descriptor_to_bytes(const char *hex,
-                                   uint8_t bytes[FS_KEY_DESCRIPTOR_SIZE]) {
-  if (strlen(hex) != FS_KEY_DESCRIPTOR_HEX_SIZE - 1) {
+                                   uint8_t bytes[FSCRYPT_KEY_DESCRIPTOR_SIZE]) {
+  if (strlen(hex) != FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE - 1) {
     return -1;
   }
 
   int i, bytes_converted, chars_read;
-  for (i = 0; i < FS_KEY_DESCRIPTOR_SIZE; ++i) {
+  for (i = 0; i < FSCRYPT_KEY_DESCRIPTOR_SIZE; ++i) {
     // We must read two hex characters of input into one byte of buffer.
     bytes_converted = sscanf(hex + 2 * i, "%2hhx%n", bytes + i, &chars_read);
     if (bytes_converted != 1 || chars_read != 2) {
@@ -182,24 +185,25 @@ static int key_descriptor_to_bytes(const char *hex,
 }
 
 // Reads key data from stdin into the provided data buffer. Return 0 on success.
-static int read_key(uint8_t key[FS_MAX_KEY_SIZE]) {
-  size_t rc = fread(key, 1, FS_MAX_KEY_SIZE, stdin);
+static int read_key(uint8_t key[FSCRYPT_MAX_KEY_SIZE]) {
+  size_t rc = fread(key, 1, FSCRYPT_MAX_KEY_SIZE, stdin);
   int end = fgetc(stdin);
-  // We should read exactly FS_MAX_KEY_SIZE bytes, then hit EOF
-  if (rc == FS_MAX_KEY_SIZE && end == EOF && feof(stdin)) {
+  // We should read exactly FSCRYPT_MAX_KEY_SIZE bytes, then hit EOF
+  if (rc == FSCRYPT_MAX_KEY_SIZE && end == EOF && feof(stdin)) {
     return 0;
   }
 
-  fprintf(stderr, "error: input key must be %d bytes\n", FS_MAX_KEY_SIZE);
+  fprintf(stderr, "error: input key must be %d bytes\n", FSCRYPT_MAX_KEY_SIZE);
   return -1;
 }
 
 // The descriptor is just the first 8 bytes of a double application of SHA512
 // formatted as hex (so 16 characters).
-static void compute_descriptor(const uint8_t key[FS_MAX_KEY_SIZE],
-                               char descriptor[FS_KEY_DESCRIPTOR_HEX_SIZE]) {
+static void compute_descriptor(
+    const uint8_t key[FSCRYPT_MAX_KEY_SIZE],
+    char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
   uint8_t digest1[SHA512_DIGEST_LENGTH];
-  SHA512(key, FS_MAX_KEY_SIZE, digest1);
+  SHA512(key, FSCRYPT_MAX_KEY_SIZE, digest1);
 
   uint8_t digest2[SHA512_DIGEST_LENGTH];
   SHA512(digest1, SHA512_DIGEST_LENGTH, digest2);
@@ -211,9 +215,10 @@ static void compute_descriptor(const uint8_t key[FS_MAX_KEY_SIZE],
 
 // Inserts the key into the current session keyring with type logon and the
 // service specified by service_prefix.
-static int insert_logon_key(const uint8_t key_data[FS_MAX_KEY_SIZE],
-                            const char descriptor[FS_KEY_DESCRIPTOR_HEX_SIZE],
-                            const char *service_prefix) {
+static int insert_logon_key(
+    const uint8_t key_data[FSCRYPT_MAX_KEY_SIZE],
+    const char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE],
+    const char *service_prefix) {
   // We cannot add directly to KEY_SPEC_SESSION_KEYRING, as that will make a new
   // session keyring if one does not exist, rather than adding it to the user
   // session keyring.
@@ -222,20 +227,20 @@ static int insert_logon_key(const uint8_t key_data[FS_MAX_KEY_SIZE],
     return -1;
   }
 
-  char description[MAX_KEY_DESC_PREFIX_SIZE + FS_KEY_DESCRIPTOR_HEX_SIZE];
+  char description[MAX_KEY_DESC_PREFIX_SIZE + FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
   sprintf(description, "%s%s", service_prefix, descriptor);
 
-  struct fscrypt_key key = {.mode = 0, .size = FS_MAX_KEY_SIZE};
-  memcpy(key.raw, key_data, FS_MAX_KEY_SIZE);
+  struct fscrypt_key key = {.mode = 0, .size = FSCRYPT_MAX_KEY_SIZE};
+  memcpy(key.raw, key_data, FSCRYPT_MAX_KEY_SIZE);
 
   int ret =
       add_key("logon", description, &key, sizeof(key), keyring_id) < 0 ? -1 : 0;
 
-  secure_wipe(key.raw, FS_MAX_KEY_SIZE);
+  secure_wipe(key.raw, FSCRYPT_MAX_KEY_SIZE);
   return ret;
 }
 
-static int get_policy(const char *path, struct fscrypt_policy *policy) {
+static int get_policy(const char *path, struct fscrypt_policy_v1 *policy) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     return -1;
@@ -256,7 +261,8 @@ static int get_policy(const char *path, struct fscrypt_policy *policy) {
   return ret;
 }
 
-static int set_policy(const char *path, const struct fscrypt_policy *policy) {
+static int set_policy(const char *path,
+                      const struct fscrypt_policy_v1 *policy) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     return -1;
@@ -271,7 +277,7 @@ static int set_policy(const char *path, const struct fscrypt_policy *policy) {
 /* Functions for various actions, return 0 on success, non-zero on failure. */
 
 // Get the descriptor for some key data passed via stdin. Provided key data must
-// have length FS_MAX_KEY_SIZE. Output will be formatted as hex.
+// have length FSCRYPT_MAX_KEY_SIZE. Output will be formatted as hex.
 static int cmd_get_descriptor(int argc, char *const argv[]) {
   if (argc != 2) {
     fputs("error: unexpected arguments\n", stderr);
@@ -279,19 +285,19 @@ static int cmd_get_descriptor(int argc, char *const argv[]) {
   }
 
   int ret = EXIT_SUCCESS;
-  uint8_t key[FS_MAX_KEY_SIZE];
+  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
 
   if (read_key(key)) {
     ret = EXIT_FAILURE;
     goto cleanup;
   }
 
-  char descriptor[FS_KEY_DESCRIPTOR_HEX_SIZE];
+  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
   compute_descriptor(key, descriptor);
   puts(descriptor);
 
 cleanup:
-  secure_wipe(key, FS_MAX_KEY_SIZE);
+  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
   return ret;
 }
 
@@ -299,7 +305,7 @@ cleanup:
 // effect of unlocking files encrypted with that key.
 static int cmd_insert_key(int argc, char *const argv[]) {
   // Which prefix will be used in this program, changed via command line flag.
-  const char *service_prefix = FS_KEY_DESC_PREFIX;
+  const char *service_prefix = FSCRYPT_KEY_DESC_PREFIX;
 
   static const struct option insert_key_options[] = {
       {"ext4", no_argument, NULL, 'e'},
@@ -327,13 +333,13 @@ static int cmd_insert_key(int argc, char *const argv[]) {
   }
 
   int ret = EXIT_SUCCESS;
-  uint8_t key[FS_MAX_KEY_SIZE];
+  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
   if (read_key(key)) {
     ret = EXIT_FAILURE;
     goto cleanup;
   }
 
-  char descriptor[FS_KEY_DESCRIPTOR_HEX_SIZE];
+  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
   compute_descriptor(key, descriptor);
   if (insert_logon_key(key, descriptor, service_prefix)) {
     fprintf(stderr, "error: inserting key: %s\n", strerror(errno));
@@ -343,7 +349,7 @@ static int cmd_insert_key(int argc, char *const argv[]) {
   puts(descriptor);
 
 cleanup:
-  secure_wipe(key, FS_MAX_KEY_SIZE);
+  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
   return ret;
 }
 
@@ -356,7 +362,7 @@ static int cmd_get_policy(int argc, char *const argv[]) {
   }
   const char *path = argv[2];
 
-  struct fscrypt_policy policy;
+  struct fscrypt_policy_v1 policy;
   if (get_policy(path, &policy)) {
     fprintf(stderr, "error: getting policy for %s: %s\n", path,
             policy_error(errno));
@@ -364,9 +370,9 @@ static int cmd_get_policy(int argc, char *const argv[]) {
   }
 
   // Pretty print the policy (includes key descriptor and flags)
-  char descriptor[FS_KEY_DESCRIPTOR_HEX_SIZE];
+  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
   key_descriptor_to_hex(policy.master_key_descriptor, descriptor);
-  int padding = padding_values[policy.flags & FS_POLICY_FLAGS_PAD_MASK];
+  int padding = padding_values[policy.flags & FSCRYPT_POLICY_FLAGS_PAD_MASK];
 
   printf("Encryption policy for %s:\n", path);
   printf("\tPolicy Version: %d\n", policy.version);
@@ -383,12 +389,12 @@ static int cmd_get_policy(int argc, char *const argv[]) {
 static int cmd_set_policy(int argc, char *const argv[]) {
   // As Kernel version 4.9, the only policy field that has multiple valid
   // options is "flags", which sets the amount of zero padding on filenames.
-  struct fscrypt_policy policy = {
+  struct fscrypt_policy_v1 policy = {
       .version = 0,
-      .contents_encryption_mode = FS_ENCRYPTION_MODE_AES_256_XTS,
-      .filenames_encryption_mode = FS_ENCRYPTION_MODE_AES_256_CTS,
+      .contents_encryption_mode = FSCRYPT_MODE_AES_256_XTS,
+      .filenames_encryption_mode = FSCRYPT_MODE_AES_256_CTS,
       // Use maximum zero-padding to leak less info about filename length
-      .flags = FS_POLICY_FLAGS_PAD_32};
+      .flags = FSCRYPT_POLICY_FLAGS_PAD_32};
 
   // Use the command-line options to modify the policy
   static const struct option insert_key_options[] = {
@@ -402,14 +408,14 @@ static int cmd_set_policy(int argc, char *const argv[]) {
     switch (ch) {
       case 'c':
         policy.contents_encryption_mode = string_to_mode(optarg);
-        if (policy.contents_encryption_mode == FS_ENCRYPTION_MODE_INVALID) {
+        if (policy.contents_encryption_mode == FSCRYPT_MODE_INVALID) {
           fprintf(stderr, "error: invalid contents mode: %s\n", optarg);
           return EXIT_FAILURE;
         }
         break;
       case 'f':
         policy.filenames_encryption_mode = string_to_mode(optarg);
-        if (policy.filenames_encryption_mode == FS_ENCRYPTION_MODE_INVALID) {
+        if (policy.filenames_encryption_mode == FSCRYPT_MODE_INVALID) {
           fprintf(stderr, "error: invalid filenames mode: %s\n", optarg);
           return EXIT_FAILURE;
         }
