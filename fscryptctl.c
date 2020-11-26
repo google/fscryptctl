@@ -115,8 +115,6 @@ const char *policy_error(int errno_val) {
     case ENODATA:
       return "file or directory not encrypted";
     case EEXIST:
-      // EINVAL was returned instead of EEXIST on some filesystems before v4.11.
-      // However, we do not attempt to work around this.
       return "file or directory already encrypted";
     case EINVAL:
       return "invalid encryption options provided";
@@ -251,15 +249,6 @@ static int get_policy(const char *path, struct fscrypt_policy_v1 *policy) {
 
   int ret = ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY, policy);
   close(fd);
-
-  if (ret < 0) {
-    // Kernels prior to v4.11 returned ENOENT if the file did not have an
-    // encryption policy, newer kernels properly return ENODATA. This lets us
-    // print the right error in policy_error regardless of kernel version.
-    if (errno == ENOENT) {
-      errno = ENODATA;
-    }
-  }
 
   return ret;
 }
