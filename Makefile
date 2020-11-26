@@ -60,14 +60,15 @@ VERSION = $(if $(TAG_VERSION),$(TAG_VERSION),$(RELEASE_VERSION))
 .PHONY: default
 default: $(NAME)
 
-sha512.o: sha512.h sha512.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) sha512.c -c -o $@
+SRC := $(wildcard *.c)
+OBJ := $(SRC:.c=.o)
+HDRS := $(wildcard *.h)
 
-$(NAME).o: $(NAME).c sha512.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DVERSION="\"$(VERSION)\"" $(NAME).c -c -o $@
+$(NAME): $(OBJ)
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $+
 
-$(NAME): $(NAME).o sha512.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+$(OBJ): %.o: %.c $(HDRS)
+	$(CC) -o $@ -c $(CPPFLAGS) $(CFLAGS) -DVERSION="\"$(VERSION)\"" $<
 
 # Testing fscryptctl (need root permissions)
 .PHONY: root test
