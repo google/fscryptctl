@@ -63,6 +63,7 @@ static const char *const mode_strings[] = {
 static const int padding_values[] = {4, 8, 16, 32};
 
 enum {
+  OPT_ALL_USERS,
   OPT_CONTENTS,
   OPT_DIRECT_KEY,
   OPT_FILENAMES,
@@ -86,6 +87,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "  fscryptctl add_key <mountpoint>\n"
       "    Read a key from stdin, add it to the specified mounted filesystem,\n"
       "    and print its identifier.\n"
+      "  fscryptctl remove_key <key identifier> <mountpoint>\n"
+      "    Remove the key with the specified identifier from the specified\n"
+      "    mounted filesystem.\n"
       "  fscryptctl get_policy <file or directory>\n"
       "    Print out the encryption policy for the specified path.\n"
       "  fscryptctl set_policy <key identifier or descriptor> <directory>\n"
@@ -101,6 +105,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "            for use with an ext4 filesystem before kernel v4.8\n"
       "        --f2fs\n"
       "            for use with an F2FS filesystem before kernel v4.6\n"
+      "    remove_key\n"
+      "        --all-users\n"
+      "            force-remove all users' claims to the key (requires root)\n"
       "    set_policy\n"
       "        --contents=<mode>\n"
       "            contents encryption mode (default: AES-256-XTS)\n"
@@ -247,6 +254,20 @@ static bool hex_to_bytes(const char *hex, uint8_t *bytes, size_t num_bytes) {
       return false;
     }
   }
+  return true;
+}
+
+// Builds a 'struct fscrypt_key_specifier' for passing to the kernel, given a
+// key identifier hex string.
+static bool build_key_specifier(const char *identifier_hex,
+                                struct fscrypt_key_specifier *key_spec) {
+  memset(key_spec, 0, sizeof(*key_spec));
+  if (!hex_to_bytes(identifier_hex, key_spec->u.identifier,
+                    FSCRYPT_KEY_IDENTIFIER_SIZE)) {
+    fprintf(stderr, "error: invalid key identifier: %s\n", identifier_hex);
+    return false;
+  }
+  key_spec->type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
   return true;
 }
 
@@ -480,6 +501,58 @@ cleanup:
   return status;
 }
 
+static int cmd_remove_key(int argc, char *const argv[]) {
+  int ioc = FS_IOC_REMOVE_ENCRYPTION_KEY;
+
+  static const struct option remove_key_options[] = {
+      {"all-users", no_argument, NULL, OPT_ALL_USERS}, {NULL, 0, NULL, 0}};
+
+  int ch;
+  while ((ch = getopt_long(argc, argv, "", remove_key_options, NULL)) != -1) {
+    switch (ch) {
+      case OPT_ALL_USERS:
+        ioc = FS_IOC_REMOVE_ENCRYPTION_KEY_ALL_USERS;
+        break;
+      default:
+        usage(stderr);
+    }
+  }
+  argc -= optind;
+  argv += optind;
+  if (argc != 2) {
+    fputs("error: must specify a key identifier and a mountpoint\n", stderr);
+    return EXIT_FAILURE;
+  }
+  const char *key_identifier = argv[0];
+  const char *mountpoint = argv[1];
+
+  struct fscrypt_remove_key_arg arg = {};
+  if (!build_key_specifier(key_identifier, &arg.key_spec)) {
+    return EXIT_FAILURE;
+  }
+
+  int fd = open(mountpoint, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    fprintf(stderr, "error: opening %s: %s\n", mountpoint, strerror(errno));
+    return EXIT_FAILURE;
+  }
+  int ret = ioctl(fd, ioc, &arg);
+  close(fd);
+  if (ret != 0) {
+    fprintf(stderr, "error: removing key: %s\n",
+            describe_fscrypt_v2_error(errno));
+    return EXIT_FAILURE;
+  }
+
+  if (arg.removal_status_flags & FSCRYPT_KEY_REMOVAL_STATUS_FLAG_OTHER_USERS) {
+    printf("warning: other users still have this key added\n");
+  } else if (arg.removal_status_flags &
+             FSCRYPT_KEY_REMOVAL_STATUS_FLAG_FILES_BUSY) {
+    printf("warning: some files using this key are still in-use\n");
+  }
+  return EXIT_SUCCESS;
+}
+
 static void show_encryption_mode(uint8_t mode_num, const char *type) {
   const char *str = mode_to_string(mode_num);
   if (str != NULL) {
@@ -678,6 +751,7 @@ static const struct {
     {"get_descriptor", cmd_get_descriptor},
     {"insert_key", cmd_insert_key},
     {"add_key", cmd_add_key},
+    {"remove_key", cmd_remove_key},
     {"get_policy", cmd_get_policy},
     {"set_policy", cmd_set_policy},
 };
