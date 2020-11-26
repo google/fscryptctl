@@ -6,8 +6,10 @@
  *     - Queries the key descriptor for an encrypted directory
  *     - Applies an encryption policy to an empty directory
  *
- * Copyright 2017 Google Inc.
- * Author: Joe Richey (joerichey@google.com)
+ * Copyright 2017, 2020 Google LLC
+ *
+ * Authors: Joe Richey (joerichey@google.com),
+ *          Eric Biggers (ebiggers@google.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -40,6 +42,7 @@
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
 #define FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE ((2 * FSCRYPT_KEY_DESCRIPTOR_SIZE) + 1)
+#define FSCRYPT_KEY_IDENTIFIER_HEX_SIZE ((2 * FSCRYPT_KEY_IDENTIFIER_SIZE) + 1)
 
 // Service prefixes for encryption keys
 #define EXT4_KEY_DESC_PREFIX "ext4:"  // For ext4 before 4.8 kernel
@@ -149,11 +152,11 @@ static bool string_to_mode(const char *str, uint8_t *mode_ret) {
   return false;
 }
 
-// Converts the encryption mode to a human-readable string. Returns "INVALID" if
-// the mode is not a valid encryption mode.
+// Converts the encryption mode to a human-readable string.  Returns NULL if the
+// mode is not a valid encryption mode.
 static const char *mode_to_string(uint8_t mode) {
-  if (mode >= ARRAY_SIZE(mode_strings) || mode_strings[mode] == NULL) {
-    return "INVALID";
+  if (mode >= ARRAY_SIZE(mode_strings)) {
+    return NULL;
   }
   return mode_strings[mode];
 }
@@ -170,13 +173,11 @@ static int string_to_padding_flag(const char *str) {
   return -1;
 }
 
-// Takes an input key descriptor as a byte array and outputs a hex string.
-static void key_descriptor_to_hex(
-    const uint8_t bytes[FSCRYPT_KEY_DESCRIPTOR_SIZE],
-    char hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
-  int i;
-  for (i = 0; i < FSCRYPT_KEY_DESCRIPTOR_SIZE; ++i) {
-    sprintf(hex + 2 * i, "%02x", bytes[i]);
+// Converts an array of bytes to hex.  The output string will be
+// (2*num_bytes)+1 characters long including the null terminator.
+static void bytes_to_hex(const uint8_t *bytes, size_t num_bytes, char *hex) {
+  for (size_t i = 0; i < num_bytes; i++) {
+    sprintf(&hex[2 * i], "%02x", bytes[i]);
   }
 }
 
@@ -223,7 +224,7 @@ static void compute_descriptor(
   uint8_t digest2[SHA512_DIGEST_LENGTH];
   SHA512(digest1, SHA512_DIGEST_LENGTH, digest2);
 
-  key_descriptor_to_hex(digest2, descriptor);
+  bytes_to_hex(digest2, FSCRYPT_KEY_DESCRIPTOR_SIZE, descriptor);
   secure_wipe(digest1, SHA512_DIGEST_LENGTH);
   secure_wipe(digest2, SHA512_DIGEST_LENGTH);
 }
@@ -255,16 +256,29 @@ static int insert_logon_key(
   return ret;
 }
 
-static int get_policy(const char *path, struct fscrypt_policy_v1 *policy) {
+static bool get_policy(const char *path,
+                       struct fscrypt_get_policy_ex_arg *arg) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
-    return -1;
+    fprintf(stderr, "error: opening %s: %s\n", path, strerror(errno));
+    return false;
   }
 
-  int ret = ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY, policy);
+  arg->policy_size = sizeof(arg->policy);
+  int ret = ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY_EX, arg);
+  if (ret != 0 && errno == ENOTTY) {
+    // The kernel may be too old to support FS_IOC_GET_ENCRYPTION_POLICY_EX.
+    // Try FS_IOC_GET_ENCRYPTION_POLICY instead.
+    ret = ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY, arg->policy.v1);
+  }
   close(fd);
 
-  return ret;
+  if (ret != 0) {
+    fprintf(stderr, "error: getting policy for %s: %s\n", path,
+            policy_error(errno));
+    return false;
+  }
+  return true;
 }
 
 static int set_policy(const char *path,
@@ -358,8 +372,64 @@ cleanup:
   return ret;
 }
 
+static void show_encryption_mode(uint8_t mode_num, const char *type) {
+  const char *str = mode_to_string(mode_num);
+  if (str != NULL) {
+    printf("\t%s encryption mode: %s\n", type, str);
+  } else {
+    printf("\t%s encryption mode: Unknown (%d)\n", type, mode_num);
+  }
+}
+
+static void show_policy_flags(uint8_t flags) {
+  printf("\tFlags: PAD_%d",
+         padding_values[flags & FSCRYPT_POLICY_FLAGS_PAD_MASK]);
+  flags &= ~FSCRYPT_POLICY_FLAGS_PAD_MASK;
+
+  if (flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY) {
+    printf(", DIRECT_KEY");
+    flags &= ~FSCRYPT_POLICY_FLAG_DIRECT_KEY;
+  }
+
+  if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
+    printf(", IV_INO_LBLK_64");
+    flags &= ~FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64;
+  }
+
+  if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) {
+    printf(", IV_INO_LBLK_32");
+    flags &= ~FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32;
+  }
+
+  if (flags != 0) {
+    printf(", Unknown (%02x)", flags);
+  }
+
+  printf("\n");
+}
+
+static void show_v1_encryption_policy(const struct fscrypt_policy_v1 *policy) {
+  char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
+  bytes_to_hex(policy->master_key_descriptor, FSCRYPT_KEY_DESCRIPTOR_SIZE,
+               descriptor_hex);
+  printf("\tMaster key descriptor: %s\n", descriptor_hex);
+  show_encryption_mode(policy->contents_encryption_mode, "Contents");
+  show_encryption_mode(policy->filenames_encryption_mode, "Filenames");
+  show_policy_flags(policy->flags);
+}
+
+static void show_v2_encryption_policy(const struct fscrypt_policy_v2 *policy) {
+  char identifier_hex[FSCRYPT_KEY_IDENTIFIER_HEX_SIZE];
+  bytes_to_hex(policy->master_key_identifier, FSCRYPT_KEY_IDENTIFIER_SIZE,
+               identifier_hex);
+  printf("\tMaster key identifier: %s\n", identifier_hex);
+  show_encryption_mode(policy->contents_encryption_mode, "Contents");
+  show_encryption_mode(policy->filenames_encryption_mode, "Filenames");
+  show_policy_flags(policy->flags);
+}
+
 // For a specified file or directory with encryption enabled, print the
-// corresponding policy to stdout. Key descriptor will be formatted as hex.
+// corresponding policy to stdout.
 static int cmd_get_policy(int argc, char *const argv[]) {
   handle_no_options(&argc, &argv);
   if (argc != 1) {
@@ -368,24 +438,23 @@ static int cmd_get_policy(int argc, char *const argv[]) {
   }
   const char *path = argv[0];
 
-  struct fscrypt_policy_v1 policy;
-  if (get_policy(path, &policy)) {
-    fprintf(stderr, "error: getting policy for %s: %s\n", path,
-            policy_error(errno));
+  struct fscrypt_get_policy_ex_arg arg = {};
+  if (!get_policy(path, &arg)) {
     return EXIT_FAILURE;
   }
 
-  // Pretty print the policy (includes key descriptor and flags)
-  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  key_descriptor_to_hex(policy.master_key_descriptor, descriptor);
-  int padding = padding_values[policy.flags & FSCRYPT_POLICY_FLAGS_PAD_MASK];
-
   printf("Encryption policy for %s:\n", path);
-  printf("\tPolicy Version: %d\n", policy.version);
-  printf("\tKey Descriptor: %s\n", descriptor);
-  printf("\tContents: %s\n", mode_to_string(policy.contents_encryption_mode));
-  printf("\tFilenames: %s\n", mode_to_string(policy.filenames_encryption_mode));
-  printf("\tPadding: %d\n", padding);
+  printf("\tPolicy version: %d\n",
+         // Hide the quirk of FSCRYPT_POLICY_V1 really being 0.
+         arg.policy.version == FSCRYPT_POLICY_V1 ? 1 : arg.policy.version);
+  switch (arg.policy.version) {
+    case FSCRYPT_POLICY_V1:
+      show_v1_encryption_policy(&arg.policy.v1);
+      break;
+    case FSCRYPT_POLICY_V2:
+      show_v2_encryption_policy(&arg.policy.v2);
+      break;
+  }
 
   return EXIT_SUCCESS;
 }
