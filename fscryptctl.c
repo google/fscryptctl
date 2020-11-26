@@ -100,6 +100,20 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
   exit(out == stderr ? EXIT_FAILURE : EXIT_SUCCESS);
 }
 
+// Preprocesses argc and argv for a command that takes no options.  (It may take
+// positional parameters.)  This makes the command handle all options as unknown
+// options and handle "--" as "end of options", rather than treating them as
+// positional parameters.  This way, we can add options in the future if needed.
+static void handle_no_options(int *argc, char *const *argv[]) {
+  static const struct option no_options[] = {{NULL, 0, NULL, 0}};
+  int ch = getopt_long(*argc, *argv, "", no_options, NULL);
+  if (ch != -1) {
+    usage(stderr);
+  }
+  *argc -= optind;
+  *argv += optind;
+}
+
 // For getting/setting policies, our error messages might differ from the
 // standard ones for certain errno values.
 const char *policy_error(int errno_val) {
@@ -271,7 +285,8 @@ static int set_policy(const char *path,
 // Get the descriptor for some key data passed via stdin. Provided key data must
 // have length FSCRYPT_MAX_KEY_SIZE. Output will be formatted as hex.
 static int cmd_get_descriptor(int argc, char *const argv[]) {
-  if (argc != 2) {
+  handle_no_options(&argc, &argv);
+  if (argc != 0) {
     fputs("error: unexpected arguments\n", stderr);
     return EXIT_FAILURE;
   }
@@ -317,9 +332,7 @@ static int cmd_insert_key(int argc, char *const argv[]) {
         usage(stderr);
     }
   }
-
-  // This command does not need additional arguments
-  if (argc != optind + 1) {
+  if (argc != optind) {
     fputs("error: unexpected arguments\n", stderr);
     return EXIT_FAILURE;
   }
@@ -348,11 +361,12 @@ cleanup:
 // For a specified file or directory with encryption enabled, print the
 // corresponding policy to stdout. Key descriptor will be formatted as hex.
 static int cmd_get_policy(int argc, char *const argv[]) {
-  if (argc != 3) {
+  handle_no_options(&argc, &argv);
+  if (argc != 1) {
     fputs("error: must specify a single file or directory\n", stderr);
     return EXIT_FAILURE;
   }
-  const char *path = argv[2];
+  const char *path = argv[0];
 
   struct fscrypt_policy_v1 policy;
   if (get_policy(path, &policy)) {
@@ -422,14 +436,14 @@ static int cmd_set_policy(int argc, char *const argv[]) {
         usage(stderr);
     }
   }
-
-  // We should have exactly 2 more arguments
-  if (argc != optind + 3) {
+  argc -= optind;
+  argv += optind;
+  if (argc != 2) {
     fputs("error: must specify a key descriptor and directory\n", stderr);
     return EXIT_FAILURE;
   }
-  const char *descriptor = argv[optind + 1];
-  const char *path = argv[optind + 2];
+  const char *descriptor = argv[0];
+  const char *path = argv[1];
 
   // Copy the descriptor into the policy, requires changing format.
   if (key_descriptor_to_bytes(descriptor, policy.master_key_descriptor)) {
@@ -457,9 +471,11 @@ static const struct {
 };
 
 int main(int argc, char *const argv[]) {
-  // Check for the help flag
-  int i;
-  for (i = 1; i < argc; ++i) {
+  // Check for the help or version options.
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--") == 0) {
+      break;
+    }
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       usage(stdout);
     }
@@ -477,7 +493,7 @@ int main(int argc, char *const argv[]) {
 
   for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
     if (strcmp(command, commands[i].name) == 0) {
-      return commands[i].func(argc, argv);
+      return commands[i].func(argc - 1, argv + 1);
     }
   }
 
