@@ -281,7 +281,7 @@ static int insert_logon_key(const uint8_t key_data[FS_MAX_KEY_SIZE],
 
 static int get_policy(const char *path, struct fscrypt_policy *policy) {
   // We can query the policy for a directory or a file in that directory.
-  int fd = open(path, O_RDONLY);
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     return -1;
   }
@@ -303,7 +303,7 @@ static int get_policy(const char *path, struct fscrypt_policy *policy) {
 
 static int set_policy(const char *path, const struct fscrypt_policy *policy) {
   // Policies can only be set on directories
-  int fd = open(path, O_RDONLY | O_DIRECTORY);
+  int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (fd < 0) {
     return -1;
   }
