@@ -494,6 +494,16 @@ static int cmd_set_policy(int argc, char *const argv[]) {
   return EXIT_SUCCESS;
 }
 
+static const struct {
+  const char *name;
+  int (*func)(int argc, char *const argv[]);
+} commands[] = {
+    {"get_descriptor", cmd_get_descriptor},
+    {"insert_key", cmd_insert_key},
+    {"get_policy", cmd_get_policy},
+    {"set_policy", cmd_set_policy},
+};
+
 int main(int argc, char *const argv[]) {
   // Check for the help flag
   int i;
@@ -513,14 +523,10 @@ int main(int argc, char *const argv[]) {
   }
   const char *command = argv[1];
 
-  if (strcmp(command, "get_descriptor") == 0) {
-    return cmd_get_descriptor(argc, argv);
-  } else if (strcmp(command, "insert_key") == 0) {
-    return cmd_insert_key(argc, argv);
-  } else if (strcmp(command, "get_policy") == 0) {
-    return cmd_get_policy(argc, argv);
-  } else if (strcmp(command, "set_policy") == 0) {
-    return cmd_set_policy(argc, argv);
+  for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
+    if (strcmp(command, commands[i].name) == 0) {
+      return commands[i].func(argc, argv);
+    }
   }
 
   fprintf(stderr, "error: invalid command: %s\n", command);
