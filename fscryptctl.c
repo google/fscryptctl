@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,8 +39,6 @@
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
-#define FSCRYPT_MODE_INVALID 0
-
 #define FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE ((2 * FSCRYPT_KEY_DESCRIPTOR_SIZE) + 1)
 
 // Service prefixes for encryption keys
@@ -49,8 +48,12 @@
 
 // Human-readable strings for encryption modes, indexed by the encryption mode
 static const char *const mode_strings[] = {
-    "INVALID",     "AES-256-XTS", "AES-256-GCM", "AES-256-CBC",
-    "AES-256-CTS", "AES-128-CBC", "AES-128-CTS"};
+    [FSCRYPT_MODE_AES_256_XTS] = "AES-256-XTS",
+    [FSCRYPT_MODE_AES_256_CTS] = "AES-256-CTS",
+    [FSCRYPT_MODE_AES_128_CBC] = "AES-128-CBC",
+    [FSCRYPT_MODE_AES_128_CTS] = "AES-128-CTS",
+    [FSCRYPT_MODE_ADIANTUM] = "Adiantum",
+};
 
 // Valid amounts of filename padding, indexed by the padding flag
 static const int padding_values[] = {4, 8, 16, 32};
@@ -122,23 +125,23 @@ const char *policy_error(int errno_val) {
   }
 }
 
-// Converts str to an encryption mode. Returns 0 (FSCRYPT_MODE_INVALID) if the
-// string does not correspond to an encryption mode.
-static uint8_t string_to_mode(const char *str) {
-  uint8_t i;
-  for (i = 1; i < ARRAY_SIZE(mode_strings); i++) {
-    if (strcmp(str, mode_strings[i]) == 0) {
-      return i;
+// Converts str to an encryption mode.  Returns false if the string does not
+// correspond to an encryption mode.
+static bool string_to_mode(const char *str, uint8_t *mode_ret) {
+  for (size_t i = 0; i < ARRAY_SIZE(mode_strings); i++) {
+    if (mode_strings[i] != NULL && strcmp(str, mode_strings[i]) == 0) {
+      *mode_ret = i;
+      return true;
     }
   }
-  return 0;
+  return false;
 }
 
 // Converts the encryption mode to a human-readable string. Returns "INVALID" if
 // the mode is not a valid encryption mode.
 static const char *mode_to_string(uint8_t mode) {
-  if (mode >= ARRAY_SIZE(mode_strings)) {
-    mode = 0;
+  if (mode >= ARRAY_SIZE(mode_strings) || mode_strings[mode] == NULL) {
+    return "INVALID";
   }
   return mode_strings[mode];
 }
@@ -407,15 +410,13 @@ static int cmd_set_policy(int argc, char *const argv[]) {
   while ((ch = getopt_long(argc, argv, "", insert_key_options, NULL)) != -1) {
     switch (ch) {
       case 'c':
-        policy.contents_encryption_mode = string_to_mode(optarg);
-        if (policy.contents_encryption_mode == FSCRYPT_MODE_INVALID) {
+        if (!string_to_mode(optarg, &policy.contents_encryption_mode)) {
           fprintf(stderr, "error: invalid contents mode: %s\n", optarg);
           return EXIT_FAILURE;
         }
         break;
       case 'f':
-        policy.filenames_encryption_mode = string_to_mode(optarg);
-        if (policy.filenames_encryption_mode == FSCRYPT_MODE_INVALID) {
+        if (!string_to_mode(optarg, &policy.filenames_encryption_mode)) {
           fprintf(stderr, "error: invalid filenames mode: %s\n", optarg);
           return EXIT_FAILURE;
         }
