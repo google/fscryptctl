@@ -90,6 +90,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "  fscryptctl remove_key <key identifier> <mountpoint>\n"
       "    Remove the key with the specified identifier from the specified\n"
       "    mounted filesystem.\n"
+      "  fscryptctl key_status <key identifier> <mountpoint>\n"
+      "    Get the status of the key with the specified identifier on the\n"
+      "    specified mounted filesystem.\n"
       "  fscryptctl get_policy <file or directory>\n"
       "    Print out the encryption policy for the specified path.\n"
       "  fscryptctl set_policy <key identifier or descriptor> <directory>\n"
@@ -553,6 +556,62 @@ static int cmd_remove_key(int argc, char *const argv[]) {
   return EXIT_SUCCESS;
 }
 
+static int cmd_key_status(int argc, char *const argv[]) {
+  handle_no_options(&argc, &argv);
+  if (argc != 2) {
+    fputs("error: must specify a key identifier and a mountpoint\n", stderr);
+    return EXIT_FAILURE;
+  }
+  const char *key_identifier = argv[0];
+  const char *mountpoint = argv[1];
+
+  struct fscrypt_get_key_status_arg arg = {};
+  if (!build_key_specifier(key_identifier, &arg.key_spec)) {
+    return EXIT_FAILURE;
+  }
+
+  int fd = open(mountpoint, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    fprintf(stderr, "error: opening %s: %s\n", mountpoint, strerror(errno));
+    return EXIT_FAILURE;
+  }
+  int ret = ioctl(fd, FS_IOC_GET_ENCRYPTION_KEY_STATUS, &arg);
+  close(fd);
+  if (ret != 0) {
+    fprintf(stderr, "error: getting key status: %s\n",
+            describe_fscrypt_v2_error(errno));
+    return EXIT_FAILURE;
+  }
+
+  switch (arg.status) {
+    case FSCRYPT_KEY_STATUS_PRESENT:
+      printf("Present");
+      if (arg.user_count || arg.status_flags) {
+        printf(" (user_count=%u", arg.user_count);
+        if (arg.status_flags & FSCRYPT_KEY_STATUS_FLAG_ADDED_BY_SELF) {
+          printf(", added_by_self");
+        }
+        arg.status_flags &= ~FSCRYPT_KEY_STATUS_FLAG_ADDED_BY_SELF;
+        if (arg.status_flags) {
+          printf(", unknown_flags=0x%08x", arg.status_flags);
+        }
+        printf(")");
+      }
+      printf("\n");
+      break;
+    case FSCRYPT_KEY_STATUS_ABSENT:
+      printf("Absent\n");
+      break;
+    case FSCRYPT_KEY_STATUS_INCOMPLETELY_REMOVED:
+      printf("Incompletely removed\n");
+      break;
+    default:
+      printf("Unknown status (%u)\n", arg.status);
+      break;
+  }
+  return EXIT_SUCCESS;
+}
+
 static void show_encryption_mode(uint8_t mode_num, const char *type) {
   const char *str = mode_to_string(mode_num);
   if (str != NULL) {
@@ -752,6 +811,7 @@ static const struct {
     {"insert_key", cmd_insert_key},
     {"add_key", cmd_add_key},
     {"remove_key", cmd_remove_key},
+    {"key_status", cmd_key_status},
     {"get_policy", cmd_get_policy},
     {"set_policy", cmd_set_policy},
 };
