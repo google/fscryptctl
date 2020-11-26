@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 #include "fscrypt_uapi.h"
@@ -82,6 +83,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "    Read a key from stdin, insert the key into the current session\n"
       "    keyring (or the user session keyring if a session keyring does not\n"
       "    exist), and print the descriptor of the key.\n"
+      "  fscryptctl add_key <mountpoint>\n"
+      "    Read a key from stdin, add it to the specified mounted filesystem,\n"
+      "    and print its identifier.\n"
       "  fscryptctl get_policy <file or directory>\n"
       "    Print out the encryption policy for the specified path.\n"
       "  fscryptctl set_policy <key identifier or descriptor> <directory>\n"
@@ -170,6 +174,23 @@ static const char *describe_set_policy_error(int errno_val) {
     default:
       return describe_fscrypt_error(errno_val);
   }
+}
+
+// Describes the error codes for the FS_IOC_ADD_ENCRYPTION_KEY,
+// FS_IOC_REMOVE_ENCRYPTION_KEY{,_ALL_USERS}, and
+// FS_IOC_GET_ENCRYPTION_KEY_STATUS ioctls.
+static const char *describe_fscrypt_v2_error(int errno_val) {
+  if (errno_val == ENOTTY) {
+    struct utsname u;
+    int major, minor;
+
+    if (uname(&u) == 0 && sscanf(u.release, "%d.%d", &major, &minor) == 2 &&
+        (major < 5 || (major == 5 && minor < 4))) {
+      return "ioctl not implemented.  Your kernel may be too old to support "
+             "all the fscrypt ioctls.  Please upgrade to Linux 5.4 or later.";
+    }
+  }
+  return describe_fscrypt_error(errno_val);
 }
 
 // Converts str to an encryption mode.  Returns false if the string does not
@@ -413,6 +434,52 @@ cleanup:
   return ret;
 }
 
+static int cmd_add_key(int argc, char *const argv[]) {
+  handle_no_options(&argc, &argv);
+  if (argc != 1) {
+    fputs("error: must specify a single mountpoint\n", stderr);
+    return EXIT_FAILURE;
+  }
+  const char *mountpoint = argv[0];
+
+  struct fscrypt_add_key_arg *arg =
+      calloc(sizeof(*arg) + FSCRYPT_MAX_KEY_SIZE, 1);
+  if (!arg) {
+    fputs("error: failed to allocate memory\n", stderr);
+    return EXIT_FAILURE;
+  }
+
+  int status = EXIT_FAILURE;
+  if (read_key(arg->raw)) {
+    goto cleanup;
+  }
+  arg->raw_size = FSCRYPT_MAX_KEY_SIZE;
+  arg->key_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
+
+  int fd = open(mountpoint, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    fprintf(stderr, "error: opening %s: %s\n", mountpoint, strerror(errno));
+    goto cleanup;
+  }
+  if (ioctl(fd, FS_IOC_ADD_ENCRYPTION_KEY, arg) != 0) {
+    fprintf(stderr, "error: adding key to %s: %s\n", mountpoint,
+            describe_fscrypt_v2_error(errno));
+    close(fd);
+    goto cleanup;
+  }
+  close(fd);
+
+  char identifier_hex[FSCRYPT_KEY_IDENTIFIER_HEX_SIZE];
+  bytes_to_hex(arg->key_spec.u.identifier, FSCRYPT_KEY_IDENTIFIER_SIZE,
+               identifier_hex);
+  puts(identifier_hex);
+  status = EXIT_SUCCESS;
+cleanup:
+  secure_wipe(arg->raw, FSCRYPT_MAX_KEY_SIZE);
+  free(arg);
+  return status;
+}
+
 static void show_encryption_mode(uint8_t mode_num, const char *type) {
   const char *str = mode_to_string(mode_num);
   if (str != NULL) {
@@ -610,6 +677,7 @@ static const struct {
 } commands[] = {
     {"get_descriptor", cmd_get_descriptor},
     {"insert_key", cmd_insert_key},
+    {"add_key", cmd_add_key},
     {"get_policy", cmd_get_policy},
     {"set_policy", cmd_set_policy},
 };
