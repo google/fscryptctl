@@ -61,6 +61,15 @@ static const char *const mode_strings[] = {
 // Valid amounts of filename padding, indexed by the padding flag
 static const int padding_values[] = {4, 8, 16, 32};
 
+enum {
+  OPT_CONTENTS,
+  OPT_DIRECT_KEY,
+  OPT_FILENAMES,
+  OPT_IV_INO_LBLK_32,
+  OPT_IV_INO_LBLK_64,
+  OPT_PADDING,
+};
+
 /* util-linux style usage */
 static void __attribute__((__noreturn__)) usage(FILE *out) {
   fputs(
@@ -75,9 +84,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "    exist), and print the descriptor of the key.\n"
       "  fscryptctl get_policy <file or directory>\n"
       "    Print out the encryption policy for the specified path.\n"
-      "  fscryptctl set_policy <key descriptor> <directory>\n"
+      "  fscryptctl set_policy <key identifier or descriptor> <directory>\n"
       "    Set up an encryption policy on the specified directory with the\n"
-      "    specified key descriptor.\n"
+      "    specified key identifier or descriptor.\n"
       "\nOptions:\n"
       "    -h, --help\n"
       "        print this help screen\n"
@@ -95,6 +104,12 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "            filenames encryption mode (default: AES-256-CTS)\n"
       "        --padding=<bytes>\n"
       "            bytes of zero padding for filenames (default: 32)\n"
+      "        --direct-key\n"
+      "            optimize for Adiantum encryption\n"
+      "        --iv-ino-lblk-64\n"
+      "            optimize for UFS inline crypto hardware\n"
+      "        --iv-ino-lblk-32\n"
+      "            optimize for eMMC inline crypto hardware (not recommended)\n"
       "\nNotes:\n"
       "  All input keys are 64 bytes long and formatted as binary.\n"
       "  All descriptors are 8 bytes and formatted as hex (16 characters).\n",
@@ -181,23 +196,20 @@ static void bytes_to_hex(const uint8_t *bytes, size_t num_bytes, char *hex) {
   }
 }
 
-// Takes an input key descriptor as a hex string and outputs a bytes array.
-// Returns non-zero if the provided hex string is not formatted correctly.
-static int key_descriptor_to_bytes(const char *hex,
-                                   uint8_t bytes[FSCRYPT_KEY_DESCRIPTOR_SIZE]) {
-  if (strlen(hex) != FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE - 1) {
-    return -1;
+// Converts a hex string to bytes, where the output length is known.
+static bool hex_to_bytes(const char *hex, uint8_t *bytes, size_t num_bytes) {
+  if (strlen(hex) != 2 * num_bytes) {
+    return false;
   }
-
-  int i, bytes_converted, chars_read;
-  for (i = 0; i < FSCRYPT_KEY_DESCRIPTOR_SIZE; ++i) {
+  for (size_t i = 0; i < num_bytes; i++) {
     // We must read two hex characters of input into one byte of buffer.
-    bytes_converted = sscanf(hex + 2 * i, "%2hhx%n", bytes + i, &chars_read);
-    if (bytes_converted != 1 || chars_read != 2) {
-      return -1;
+    int chars_read = 0;
+    int ret = sscanf(&hex[2 * i], "%2hhx%n", &bytes[i], &chars_read);
+    if (ret != 1 || chars_read != 2) {
+      return false;
     }
   }
-  return 0;
+  return true;
 }
 
 // Reads key data from stdin into the provided data buffer. Return 0 on success.
@@ -281,17 +293,29 @@ static bool get_policy(const char *path,
   return true;
 }
 
-static int set_policy(const char *path,
-                      const struct fscrypt_policy_v1 *policy) {
+#undef fscrypt_policy
+union fscrypt_policy {
+  uint8_t version;
+  struct fscrypt_policy_v1 v1;
+  struct fscrypt_policy_v2 v2;
+};
+
+static bool set_policy(const char *path, const union fscrypt_policy *policy) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
-    return -1;
+    fprintf(stderr, "error: opening %s: %s\n", path, strerror(errno));
+    return false;
   }
 
   int ret = ioctl(fd, FS_IOC_SET_ENCRYPTION_POLICY, policy);
   close(fd);
 
-  return ret;
+  if (ret != 0) {
+    fprintf(stderr, "error: setting policy for %s: %s\n", path,
+            policy_error(errno));
+    return false;
+  }
+  return true;
 }
 
 /* Functions for various actions, return 0 on success, non-zero on failure. */
@@ -459,47 +483,56 @@ static int cmd_get_policy(int argc, char *const argv[]) {
   return EXIT_SUCCESS;
 }
 
-// Apply a policy (i.e. the specified descriptor) to the specified directory.
-// The policy options defaults can be overridden by command-line options.
+// Apply an encryption policy to the specified directory.  The encryption
+// options can be overridden by command-line options.
 static int cmd_set_policy(int argc, char *const argv[]) {
-  // As Kernel version 4.9, the only policy field that has multiple valid
-  // options is "flags", which sets the amount of zero padding on filenames.
-  struct fscrypt_policy_v1 policy = {
-      .version = 0,
-      .contents_encryption_mode = FSCRYPT_MODE_AES_256_XTS,
-      .filenames_encryption_mode = FSCRYPT_MODE_AES_256_CTS,
-      // Use maximum zero-padding to leak less info about filename length
-      .flags = FSCRYPT_POLICY_FLAGS_PAD_32};
+  uint8_t contents_encryption_mode = FSCRYPT_MODE_AES_256_XTS;
+  uint8_t filenames_encryption_mode = FSCRYPT_MODE_AES_256_CTS;
+  // Default to maximum zero-padding to leak less info about filename lengths.
+  uint8_t flags = FSCRYPT_POLICY_FLAGS_PAD_32;
 
-  // Use the command-line options to modify the policy
-  static const struct option insert_key_options[] = {
-      {"contents", required_argument, NULL, 'c'},
-      {"filenames", required_argument, NULL, 'f'},
-      {"padding", required_argument, NULL, 'p'},
+  static const struct option set_policy_options[] = {
+      {"contents", required_argument, NULL, OPT_CONTENTS},
+      {"filenames", required_argument, NULL, OPT_FILENAMES},
+      {"padding", required_argument, NULL, OPT_PADDING},
+      {"direct-key", no_argument, NULL, OPT_DIRECT_KEY},
+      {"iv-ino-lblk-64", no_argument, NULL, OPT_IV_INO_LBLK_64},
+      {"iv-ino-lblk-32", no_argument, NULL, OPT_IV_INO_LBLK_32},
       {NULL, 0, NULL, 0}};
 
   int ch, padding_flag;
-  while ((ch = getopt_long(argc, argv, "", insert_key_options, NULL)) != -1) {
+  while ((ch = getopt_long(argc, argv, "", set_policy_options, NULL)) != -1) {
     switch (ch) {
-      case 'c':
-        if (!string_to_mode(optarg, &policy.contents_encryption_mode)) {
+      case OPT_CONTENTS:
+        if (!string_to_mode(optarg, &contents_encryption_mode)) {
           fprintf(stderr, "error: invalid contents mode: %s\n", optarg);
           return EXIT_FAILURE;
         }
         break;
-      case 'f':
-        if (!string_to_mode(optarg, &policy.filenames_encryption_mode)) {
+      case OPT_FILENAMES:
+        if (!string_to_mode(optarg, &filenames_encryption_mode)) {
           fprintf(stderr, "error: invalid filenames mode: %s\n", optarg);
           return EXIT_FAILURE;
         }
         break;
-      case 'p':
+      case OPT_PADDING:
         padding_flag = string_to_padding_flag(optarg);
         if (padding_flag < 0) {
           fprintf(stderr, "error: invalid padding: %s\n", optarg);
           return EXIT_FAILURE;
         }
-        policy.flags = padding_flag;
+        flags &= ~FSCRYPT_POLICY_FLAGS_PAD_MASK;
+        flags |= padding_flag;
+        break;
+      case OPT_DIRECT_KEY:
+        flags |= FSCRYPT_POLICY_FLAG_DIRECT_KEY;
+        break;
+      case OPT_IV_INO_LBLK_64:
+        flags |= FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64;
+        break;
+      case OPT_IV_INO_LBLK_32:
+        printf("warning: --iv-ino-lblk-32 should normally not be used\n");
+        flags |= FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32;
         break;
       default:
         usage(stderr);
@@ -508,21 +541,46 @@ static int cmd_set_policy(int argc, char *const argv[]) {
   argc -= optind;
   argv += optind;
   if (argc != 2) {
-    fputs("error: must specify a key descriptor and directory\n", stderr);
+    fputs("error: must specify a key and a directory\n", stderr);
     return EXIT_FAILURE;
   }
-  const char *descriptor = argv[0];
+  const char *key_specifier = argv[0];
   const char *path = argv[1];
 
-  // Copy the descriptor into the policy, requires changing format.
-  if (key_descriptor_to_bytes(descriptor, policy.master_key_descriptor)) {
-    fprintf(stderr, "error: invalid descriptor: %s\n", descriptor);
-    return EXIT_FAILURE;
+  // Initialize the encryption policy struct.  Determine the policy version by
+  // the length of the key specifier.  v1 uses a key descriptor of 8 bytes (16
+  // hex chars).  v2 uses a key identifier of 16 bytes (32 hex chars).
+  union fscrypt_policy policy = {};
+  switch (strlen(key_specifier) + 1 /* count the null terminator */) {
+    case FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE:
+      policy.version = FSCRYPT_POLICY_V1;
+      if (!hex_to_bytes(key_specifier, policy.v1.master_key_descriptor,
+                        FSCRYPT_KEY_DESCRIPTOR_SIZE)) {
+        fprintf(stderr, "error: invalid key descriptor: %s\n", key_specifier);
+        return EXIT_FAILURE;
+      }
+      policy.v1.contents_encryption_mode = contents_encryption_mode;
+      policy.v1.filenames_encryption_mode = filenames_encryption_mode;
+      policy.v1.flags = flags;
+      break;
+    case FSCRYPT_KEY_IDENTIFIER_HEX_SIZE:
+      policy.version = FSCRYPT_POLICY_V2;
+      if (!hex_to_bytes(key_specifier, policy.v2.master_key_identifier,
+                        FSCRYPT_KEY_IDENTIFIER_SIZE)) {
+        fprintf(stderr, "error: invalid key identifier: %s\n", key_specifier);
+        return EXIT_FAILURE;
+      }
+      policy.v2.contents_encryption_mode = contents_encryption_mode;
+      policy.v2.filenames_encryption_mode = filenames_encryption_mode;
+      policy.v2.flags = flags;
+      break;
+    default:
+      fprintf(stderr, "error: invalid key specifier: %s\n", key_specifier);
+      return EXIT_FAILURE;
   }
 
-  if (set_policy(path, &policy)) {
-    fprintf(stderr, "error: setting policy for %s: %s\n", path,
-            policy_error(errno));
+  // Set the encryption policy on the directory.
+  if (!set_policy(path, &policy)) {
     return EXIT_FAILURE;
   }
 
