@@ -38,6 +38,15 @@
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
+// Although the kernel always allows 64-byte keys, it may allow shorter keys
+// too, depending on the encryption mode(s) used.  The shortest key the kernel
+// can ever accept is 16 bytes, which occurs when AES-128-CBC contents
+// encryption is used.  However, when adding a key, fscryptctl doesn't know
+// which encryption mode(s) will be used later.  So fscryptctl just allows all
+// key lengths in the range [16, 64], and the kernel will return an error later
+// if the key is too short for the encryption policy it is used for.
+#define FSCRYPT_MIN_KEY_SIZE 16
+
 #define FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE ((2 * FSCRYPT_KEY_DESCRIPTOR_SIZE) + 1)
 #define FSCRYPT_KEY_IDENTIFIER_HEX_SIZE ((2 * FSCRYPT_KEY_IDENTIFIER_SIZE) + 1)
 
@@ -125,7 +134,7 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "  encryption policy.  In this case, keys are described by 16-character\n"
       "  hex strings (key descriptors).\n"
       "\n"
-      "  All input keys are 64 bytes long and formatted as binary.\n",
+      "  Raw keys are given on stdin in binary and usually must be 64 bytes.\n",
       out);
 
   exit(out == stderr ? EXIT_FAILURE : EXIT_SUCCESS);
@@ -273,17 +282,51 @@ static bool build_key_specifier(const char *identifier_hex,
   return true;
 }
 
-// Reads key data from stdin into the provided data buffer. Return 0 on success.
-static int read_key(uint8_t key[FSCRYPT_MAX_KEY_SIZE]) {
-  size_t rc = fread(key, 1, FSCRYPT_MAX_KEY_SIZE, stdin);
-  int end = fgetc(stdin);
-  // We should read exactly FSCRYPT_MAX_KEY_SIZE bytes, then hit EOF
-  if (rc == FSCRYPT_MAX_KEY_SIZE && end == EOF && feof(stdin)) {
-    return 0;
+static ssize_t read_until_limit_or_eof(int fd, uint8_t *buf, size_t limit) {
+  size_t pos = 0;
+  while (pos < limit) {
+    ssize_t ret = read(fd, &buf[pos], limit - pos);
+    if (ret < 0) {
+      return ret;
+    }
+    if (ret == 0) {
+      break;
+    }
+    pos += ret;
   }
+  return pos;
+}
 
-  fprintf(stderr, "error: input key must be %d bytes\n", FSCRYPT_MAX_KEY_SIZE);
-  return -1;
+// Reads a raw key, of size at least FSCRYPT_MIN_KEY_SIZE bytes and at most
+// FSCRYPT_MAX_KEY_SIZE bytes, from standard input into the provided buffer.
+// On success, returns the key size in bytes.  On failure, returns 0.
+//
+// Note that we use read(STDIN_FILENO) directly rather than fread(stdin), to
+// prevent the key from being copied into the internal buffer of the 'FILE *'.
+static size_t read_key(uint8_t raw_key[FSCRYPT_MAX_KEY_SIZE]) {
+  uint8_t buf[FSCRYPT_MAX_KEY_SIZE + 1];
+  ssize_t ret = read_until_limit_or_eof(STDIN_FILENO, buf, sizeof(buf));
+  if (ret < 0) {
+    fprintf(stderr, "error: reading from stdin: %s\n", strerror(errno));
+    ret = 0;
+    goto cleanup;
+  }
+  if (ret < FSCRYPT_MIN_KEY_SIZE) {
+    fprintf(stderr, "error: key was too short; it must be at least %d bytes\n",
+            FSCRYPT_MIN_KEY_SIZE);
+    ret = 0;
+    goto cleanup;
+  }
+  if (ret > FSCRYPT_MAX_KEY_SIZE) {
+    fprintf(stderr, "error: key was too long; it can be at most %d bytes\n",
+            FSCRYPT_MAX_KEY_SIZE);
+    ret = 0;
+    goto cleanup;
+  }
+  memcpy(raw_key, buf, ret);
+cleanup:
+  secure_wipe(buf, sizeof(buf));
+  return ret;
 }
 
 static bool get_policy(const char *path,
@@ -356,10 +399,10 @@ static int cmd_add_key(int argc, char *const argv[]) {
   }
 
   int status = EXIT_FAILURE;
-  if (read_key(arg->raw)) {
+  arg->raw_size = read_key(arg->raw);
+  if (arg->raw_size == 0) {
     goto cleanup;
   }
-  arg->raw_size = FSCRYPT_MAX_KEY_SIZE;
   arg->key_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
 
   int fd = open(mountpoint, O_RDONLY | O_CLOEXEC);
@@ -381,7 +424,7 @@ static int cmd_add_key(int argc, char *const argv[]) {
   puts(identifier_hex);
   status = EXIT_SUCCESS;
 cleanup:
-  secure_wipe(arg->raw, FSCRYPT_MAX_KEY_SIZE);
+  secure_wipe(arg->raw, arg->raw_size);
   free(arg);
   return status;
 }
@@ -697,44 +740,44 @@ static int cmd_set_policy(int argc, char *const argv[]) {
 // The descriptor is just the first 8 bytes of a double application of SHA512
 // formatted as hex (so 16 characters).
 static void compute_descriptor(
-    const uint8_t key[FSCRYPT_MAX_KEY_SIZE],
-    char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
+    const uint8_t *raw_key, size_t keysize,
+    char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
   uint8_t digest1[SHA512_DIGEST_LENGTH];
-  SHA512(key, FSCRYPT_MAX_KEY_SIZE, digest1);
+  SHA512(raw_key, keysize, digest1);
 
   uint8_t digest2[SHA512_DIGEST_LENGTH];
   SHA512(digest1, SHA512_DIGEST_LENGTH, digest2);
 
-  bytes_to_hex(digest2, FSCRYPT_KEY_DESCRIPTOR_SIZE, descriptor);
+  bytes_to_hex(digest2, FSCRYPT_KEY_DESCRIPTOR_SIZE, descriptor_hex);
   secure_wipe(digest1, SHA512_DIGEST_LENGTH);
   secure_wipe(digest2, SHA512_DIGEST_LENGTH);
 }
 
 // Inserts the key into the current session keyring with type logon and the
 // service specified by service_prefix.
-static int insert_logon_key(
-    const uint8_t key_data[FSCRYPT_MAX_KEY_SIZE],
-    const char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE],
+static bool insert_logon_key(
+    const uint8_t *raw_key, size_t keysize,
+    const char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE],
     const char *service_prefix) {
   // We cannot add directly to KEY_SPEC_SESSION_KEYRING, as that will make a new
   // session keyring if one does not exist, rather than adding it to the user
   // session keyring.
   int keyring_id = keyctl_get_keyring_ID(KEY_SPEC_SESSION_KEYRING, 0);
   if (keyring_id < 0) {
-    return -1;
+    return false;
   }
 
   char description[MAX_KEY_DESC_PREFIX_SIZE + FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  sprintf(description, "%s%s", service_prefix, descriptor);
+  sprintf(description, "%s%s", service_prefix, descriptor_hex);
 
-  struct fscrypt_key key = {.mode = 0, .size = FSCRYPT_MAX_KEY_SIZE};
-  memcpy(key.raw, key_data, FSCRYPT_MAX_KEY_SIZE);
+  struct fscrypt_key payload = {.size = keysize};
+  memcpy(payload.raw, raw_key, keysize);
 
-  int ret =
-      add_key("logon", description, &key, sizeof(key), keyring_id) < 0 ? -1 : 0;
+  int key_id =
+      add_key("logon", description, &payload, sizeof(payload), keyring_id);
 
-  secure_wipe(key.raw, FSCRYPT_MAX_KEY_SIZE);
-  return ret;
+  secure_wipe(payload.raw, keysize);
+  return key_id >= 0;
 }
 
 // (Deprecated) Computes the descriptor for a key passed via stdin.  This only
@@ -746,21 +789,20 @@ static int cmd_get_descriptor(int argc, char *const argv[]) {
     return EXIT_FAILURE;
   }
 
-  int ret = EXIT_SUCCESS;
-  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
-
-  if (read_key(key)) {
-    ret = EXIT_FAILURE;
+  int status = EXIT_FAILURE;
+  uint8_t raw_key[FSCRYPT_MAX_KEY_SIZE];
+  size_t keysize = read_key(raw_key);
+  if (keysize == 0) {
     goto cleanup;
   }
 
-  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  compute_descriptor(key, descriptor);
-  puts(descriptor);
-
+  char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
+  compute_descriptor(raw_key, keysize, descriptor_hex);
+  puts(descriptor_hex);
+  status = EXIT_SUCCESS;
 cleanup:
-  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
-  return ret;
+  secure_wipe(raw_key, keysize);
+  return status;
 }
 
 // (Deprecated) Inserts a key read from stdin into the current session keyring.
@@ -793,25 +835,24 @@ static int cmd_insert_key(int argc, char *const argv[]) {
     return EXIT_FAILURE;
   }
 
-  int ret = EXIT_SUCCESS;
-  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
-  if (read_key(key)) {
-    ret = EXIT_FAILURE;
+  int status = EXIT_FAILURE;
+  uint8_t raw_key[FSCRYPT_MAX_KEY_SIZE];
+  size_t keysize = read_key(raw_key);
+  if (keysize == 0) {
     goto cleanup;
   }
 
-  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  compute_descriptor(key, descriptor);
-  if (insert_logon_key(key, descriptor, service_prefix)) {
+  char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
+  compute_descriptor(raw_key, keysize, descriptor_hex);
+  if (!insert_logon_key(raw_key, keysize, descriptor_hex, service_prefix)) {
     fprintf(stderr, "error: inserting key: %s\n", strerror(errno));
-    ret = EXIT_FAILURE;
     goto cleanup;
   }
-  puts(descriptor);
-
+  puts(descriptor_hex);
+  status = EXIT_SUCCESS;
 cleanup:
-  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
-  return ret;
+  secure_wipe(raw_key, keysize);
+  return status;
 }
 
 // -----------------------------------------------------------------------------
