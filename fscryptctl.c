@@ -1,10 +1,6 @@
 /*
- * fscryptctl.c - Low level tool for managing keys and policies for the
- * fs/crypto kernel interface. Specifically, this tool:
- *     - Computes the descriptor for a provided key
- *     - Inserts a provided key into the keyring
- *     - Queries the key descriptor for an encrypted directory
- *     - Applies an encryption policy to an empty directory
+ * fscryptctl.c - Low-level tool for managing keys and policies for the
+ *                fs/crypto/ kernel interface.
  *
  * Copyright 2017, 2020 Google LLC
  *
@@ -45,11 +41,6 @@
 #define FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE ((2 * FSCRYPT_KEY_DESCRIPTOR_SIZE) + 1)
 #define FSCRYPT_KEY_IDENTIFIER_HEX_SIZE ((2 * FSCRYPT_KEY_IDENTIFIER_SIZE) + 1)
 
-// Service prefixes for encryption keys
-#define EXT4_KEY_DESC_PREFIX "ext4:"  // For ext4 before 4.8 kernel
-#define F2FS_KEY_DESC_PREFIX "f2fs:"  // For f2fs before 4.6 kernel
-#define MAX_KEY_DESC_PREFIX_SIZE 8
-
 // Human-readable strings for encryption modes, indexed by the encryption mode
 static const char *const mode_strings[] = {
     [FSCRYPT_MODE_AES_256_XTS] = "AES-256-XTS",
@@ -78,12 +69,6 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "\nUsage:\n"
       "  fscryptctl <command> [arguments] [options]\n"
       "\nCommands:\n"
-      "  fscryptctl get_descriptor\n"
-      "    Read a key from stdin, and print the hex descriptor of the key.\n"
-      "  fscryptctl insert_key\n"
-      "    Read a key from stdin, insert the key into the current session\n"
-      "    keyring (or the user session keyring if a session keyring does not\n"
-      "    exist), and print the descriptor of the key.\n"
       "  fscryptctl add_key <mountpoint>\n"
       "    Read a key from stdin, add it to the specified mounted filesystem,\n"
       "    and print its identifier.\n"
@@ -98,16 +83,18 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "  fscryptctl set_policy <key identifier or descriptor> <directory>\n"
       "    Set up an encryption policy on the specified directory with the\n"
       "    specified key identifier or descriptor.\n"
+      "\nDeprecated commands (for v1 encryption policies):\n"
+      "  fscryptctl get_descriptor\n"
+      "    Read a key from stdin, and print the hex descriptor of the key.\n"
+      "  fscryptctl insert_key\n"
+      "    Read a key from stdin, insert the key into the current session\n"
+      "    keyring (or the user session keyring if a session keyring does not\n"
+      "    exist), and print the descriptor of the key.\n"
       "\nOptions:\n"
       "    -h, --help\n"
       "        print this help screen\n"
       "    -v, --version\n"
       "        print the version of fscrypt\n"
-      "    insert_key\n"
-      "        --ext4\n"
-      "            for use with an ext4 filesystem before kernel v4.8\n"
-      "        --f2fs\n"
-      "            for use with an F2FS filesystem before kernel v4.6\n"
       "    remove_key\n"
       "        --all-users\n"
       "            force-remove all users' claims to the key (requires root)\n"
@@ -124,9 +111,21 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "            optimize for UFS inline crypto hardware\n"
       "        --iv-ino-lblk-32\n"
       "            optimize for eMMC inline crypto hardware (not recommended)\n"
+      "    insert_key (deprecated)\n"
+      "        --ext4\n"
+      "            for use with an ext4 filesystem before kernel v4.8\n"
+      "        --f2fs\n"
+      "            for use with an F2FS filesystem before kernel v4.6\n"
       "\nNotes:\n"
-      "  All input keys are 64 bytes long and formatted as binary.\n"
-      "  All descriptors are 8 bytes and formatted as hex (16 characters).\n",
+      "  On recent kernels (5.4 and later), use add_key and set_policy.\n"
+      "  In this case, keys are identified by 32-character hex strings\n"
+      "  (key identifiers).\n"
+      "\n"
+      "  On older kernels, use insert_key and set_policy to set a v1\n"
+      "  encryption policy.  In this case, keys are described by 16-character\n"
+      "  hex strings (key descriptors).\n"
+      "\n"
+      "  All input keys are 64 bytes long and formatted as binary.\n",
       out);
 
   exit(out == stderr ? EXIT_FAILURE : EXIT_SUCCESS);
@@ -287,49 +286,6 @@ static int read_key(uint8_t key[FSCRYPT_MAX_KEY_SIZE]) {
   return -1;
 }
 
-// The descriptor is just the first 8 bytes of a double application of SHA512
-// formatted as hex (so 16 characters).
-static void compute_descriptor(
-    const uint8_t key[FSCRYPT_MAX_KEY_SIZE],
-    char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
-  uint8_t digest1[SHA512_DIGEST_LENGTH];
-  SHA512(key, FSCRYPT_MAX_KEY_SIZE, digest1);
-
-  uint8_t digest2[SHA512_DIGEST_LENGTH];
-  SHA512(digest1, SHA512_DIGEST_LENGTH, digest2);
-
-  bytes_to_hex(digest2, FSCRYPT_KEY_DESCRIPTOR_SIZE, descriptor);
-  secure_wipe(digest1, SHA512_DIGEST_LENGTH);
-  secure_wipe(digest2, SHA512_DIGEST_LENGTH);
-}
-
-// Inserts the key into the current session keyring with type logon and the
-// service specified by service_prefix.
-static int insert_logon_key(
-    const uint8_t key_data[FSCRYPT_MAX_KEY_SIZE],
-    const char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE],
-    const char *service_prefix) {
-  // We cannot add directly to KEY_SPEC_SESSION_KEYRING, as that will make a new
-  // session keyring if one does not exist, rather than adding it to the user
-  // session keyring.
-  int keyring_id = keyctl_get_keyring_ID(KEY_SPEC_SESSION_KEYRING, 0);
-  if (keyring_id < 0) {
-    return -1;
-  }
-
-  char description[MAX_KEY_DESC_PREFIX_SIZE + FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  sprintf(description, "%s%s", service_prefix, descriptor);
-
-  struct fscrypt_key key = {.mode = 0, .size = FSCRYPT_MAX_KEY_SIZE};
-  memcpy(key.raw, key_data, FSCRYPT_MAX_KEY_SIZE);
-
-  int ret =
-      add_key("logon", description, &key, sizeof(key), keyring_id) < 0 ? -1 : 0;
-
-  secure_wipe(key.raw, FSCRYPT_MAX_KEY_SIZE);
-  return ret;
-}
-
 static bool get_policy(const char *path,
                        struct fscrypt_get_policy_ex_arg *arg) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -380,83 +336,9 @@ static bool set_policy(const char *path, const union fscrypt_policy *policy) {
   return true;
 }
 
-/* Functions for various actions, return 0 on success, non-zero on failure. */
-
-// Get the descriptor for some key data passed via stdin. Provided key data must
-// have length FSCRYPT_MAX_KEY_SIZE. Output will be formatted as hex.
-static int cmd_get_descriptor(int argc, char *const argv[]) {
-  handle_no_options(&argc, &argv);
-  if (argc != 0) {
-    fputs("error: unexpected arguments\n", stderr);
-    return EXIT_FAILURE;
-  }
-
-  int ret = EXIT_SUCCESS;
-  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
-
-  if (read_key(key)) {
-    ret = EXIT_FAILURE;
-    goto cleanup;
-  }
-
-  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  compute_descriptor(key, descriptor);
-  puts(descriptor);
-
-cleanup:
-  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
-  return ret;
-}
-
-// Insert a key read from stdin into the current session keyring. This has the
-// effect of unlocking files encrypted with that key.
-static int cmd_insert_key(int argc, char *const argv[]) {
-  // Which prefix will be used in this program, changed via command line flag.
-  const char *service_prefix = FSCRYPT_KEY_DESC_PREFIX;
-
-  static const struct option insert_key_options[] = {
-      {"ext4", no_argument, NULL, 'e'},
-      {"f2fs", no_argument, NULL, 'f'},
-      {NULL, 0, NULL, 0}};
-
-  int ch;
-  while ((ch = getopt_long(argc, argv, "", insert_key_options, NULL)) != -1) {
-    switch (ch) {
-      case 'e':
-        service_prefix = EXT4_KEY_DESC_PREFIX;
-        break;
-      case 'f':
-        service_prefix = F2FS_KEY_DESC_PREFIX;
-        break;
-      default:
-        usage(stderr);
-    }
-  }
-  if (argc != optind) {
-    fputs("error: unexpected arguments\n", stderr);
-    return EXIT_FAILURE;
-  }
-
-  int ret = EXIT_SUCCESS;
-  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
-  if (read_key(key)) {
-    ret = EXIT_FAILURE;
-    goto cleanup;
-  }
-
-  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  compute_descriptor(key, descriptor);
-  if (insert_logon_key(key, descriptor, service_prefix)) {
-    fprintf(stderr, "error: inserting key: %s\n", strerror(errno));
-    ret = EXIT_FAILURE;
-    goto cleanup;
-  }
-  puts(descriptor);
-
-cleanup:
-  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
-  return ret;
-}
+// -----------------------------------------------------------------------------
+//                                 Commands
+// -----------------------------------------------------------------------------
 
 static int cmd_add_key(int argc, char *const argv[]) {
   handle_no_options(&argc, &argv);
@@ -803,17 +685,151 @@ static int cmd_set_policy(int argc, char *const argv[]) {
   return EXIT_SUCCESS;
 }
 
+// -----------------------------------------------------------------------------
+//                            Deprecated commands
+// -----------------------------------------------------------------------------
+
+// Service prefixes for encryption keys
+#define EXT4_KEY_DESC_PREFIX "ext4:"  // For ext4 before 4.8 kernel
+#define F2FS_KEY_DESC_PREFIX "f2fs:"  // For f2fs before 4.6 kernel
+#define MAX_KEY_DESC_PREFIX_SIZE 8
+
+// The descriptor is just the first 8 bytes of a double application of SHA512
+// formatted as hex (so 16 characters).
+static void compute_descriptor(
+    const uint8_t key[FSCRYPT_MAX_KEY_SIZE],
+    char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
+  uint8_t digest1[SHA512_DIGEST_LENGTH];
+  SHA512(key, FSCRYPT_MAX_KEY_SIZE, digest1);
+
+  uint8_t digest2[SHA512_DIGEST_LENGTH];
+  SHA512(digest1, SHA512_DIGEST_LENGTH, digest2);
+
+  bytes_to_hex(digest2, FSCRYPT_KEY_DESCRIPTOR_SIZE, descriptor);
+  secure_wipe(digest1, SHA512_DIGEST_LENGTH);
+  secure_wipe(digest2, SHA512_DIGEST_LENGTH);
+}
+
+// Inserts the key into the current session keyring with type logon and the
+// service specified by service_prefix.
+static int insert_logon_key(
+    const uint8_t key_data[FSCRYPT_MAX_KEY_SIZE],
+    const char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE],
+    const char *service_prefix) {
+  // We cannot add directly to KEY_SPEC_SESSION_KEYRING, as that will make a new
+  // session keyring if one does not exist, rather than adding it to the user
+  // session keyring.
+  int keyring_id = keyctl_get_keyring_ID(KEY_SPEC_SESSION_KEYRING, 0);
+  if (keyring_id < 0) {
+    return -1;
+  }
+
+  char description[MAX_KEY_DESC_PREFIX_SIZE + FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
+  sprintf(description, "%s%s", service_prefix, descriptor);
+
+  struct fscrypt_key key = {.mode = 0, .size = FSCRYPT_MAX_KEY_SIZE};
+  memcpy(key.raw, key_data, FSCRYPT_MAX_KEY_SIZE);
+
+  int ret =
+      add_key("logon", description, &key, sizeof(key), keyring_id) < 0 ? -1 : 0;
+
+  secure_wipe(key.raw, FSCRYPT_MAX_KEY_SIZE);
+  return ret;
+}
+
+// (Deprecated) Computes the descriptor for a key passed via stdin.  This only
+// supports v1 encryption policies, not v2.
+static int cmd_get_descriptor(int argc, char *const argv[]) {
+  handle_no_options(&argc, &argv);
+  if (argc != 0) {
+    fputs("error: unexpected arguments\n", stderr);
+    return EXIT_FAILURE;
+  }
+
+  int ret = EXIT_SUCCESS;
+  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
+
+  if (read_key(key)) {
+    ret = EXIT_FAILURE;
+    goto cleanup;
+  }
+
+  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
+  compute_descriptor(key, descriptor);
+  puts(descriptor);
+
+cleanup:
+  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
+  return ret;
+}
+
+// (Deprecated) Inserts a key read from stdin into the current session keyring.
+// This has the effect of unlocking files encrypted with that key.  This only
+// works for v1 encryption policies, not v2.  Use add_key for v2.
+static int cmd_insert_key(int argc, char *const argv[]) {
+  // Which prefix will be used in this program, changed via command line flag.
+  const char *service_prefix = FSCRYPT_KEY_DESC_PREFIX;
+
+  static const struct option insert_key_options[] = {
+      {"ext4", no_argument, NULL, 'e'},
+      {"f2fs", no_argument, NULL, 'f'},
+      {NULL, 0, NULL, 0}};
+
+  int ch;
+  while ((ch = getopt_long(argc, argv, "", insert_key_options, NULL)) != -1) {
+    switch (ch) {
+      case 'e':
+        service_prefix = EXT4_KEY_DESC_PREFIX;
+        break;
+      case 'f':
+        service_prefix = F2FS_KEY_DESC_PREFIX;
+        break;
+      default:
+        usage(stderr);
+    }
+  }
+  if (argc != optind) {
+    fputs("error: unexpected arguments\n", stderr);
+    return EXIT_FAILURE;
+  }
+
+  int ret = EXIT_SUCCESS;
+  uint8_t key[FSCRYPT_MAX_KEY_SIZE];
+  if (read_key(key)) {
+    ret = EXIT_FAILURE;
+    goto cleanup;
+  }
+
+  char descriptor[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
+  compute_descriptor(key, descriptor);
+  if (insert_logon_key(key, descriptor, service_prefix)) {
+    fprintf(stderr, "error: inserting key: %s\n", strerror(errno));
+    ret = EXIT_FAILURE;
+    goto cleanup;
+  }
+  puts(descriptor);
+
+cleanup:
+  secure_wipe(key, FSCRYPT_MAX_KEY_SIZE);
+  return ret;
+}
+
+// -----------------------------------------------------------------------------
+//                            The main() function
+// -----------------------------------------------------------------------------
+
 static const struct {
   const char *name;
   int (*func)(int argc, char *const argv[]);
 } commands[] = {
-    {"get_descriptor", cmd_get_descriptor},
-    {"insert_key", cmd_insert_key},
     {"add_key", cmd_add_key},
     {"remove_key", cmd_remove_key},
     {"key_status", cmd_key_status},
     {"get_policy", cmd_get_policy},
     {"set_policy", cmd_set_policy},
+    // deprecated commands
+    {"get_descriptor", cmd_get_descriptor},
+    {"insert_key", cmd_insert_key},
 };
 
 int main(int argc, char *const argv[]) {
