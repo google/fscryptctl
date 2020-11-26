@@ -35,6 +35,8 @@
 #include "keyutils.h"
 #include "sha512.h"
 
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+
 // Some of the necessary structures, constants, and functions are declared in
 // <linux/fs.h> or <keyutils.h> but are either incomplete (depending on your
 // kernel version) or require an external library. So to simplify things, they
@@ -88,14 +90,12 @@ struct fscrypt_policy {
 /* End <linux/fs.h> */
 
 // Human-readable strings for encryption modes, indexed by the encryption mode
-#define NUM_ENCRYPTION_MODES 7
-const char *const mode_strings[NUM_ENCRYPTION_MODES] = {
+static const char *const mode_strings[] = {
     "INVALID",     "AES-256-XTS", "AES-256-GCM", "AES-256-CBC",
     "AES-256-CTS", "AES-128-CBC", "AES-128-CTS"};
 
 // Valid amounts of filename padding, indexed by the padding flag
-#define NUM_PADDING_VALUES 4
-const int padding_values[NUM_PADDING_VALUES] = {4, 8, 16, 32};
+static const int padding_values[] = {4, 8, 16, 32};
 
 /* util-linux style usage */
 static void __attribute__((__noreturn__)) usage(FILE *out) {
@@ -168,7 +168,7 @@ const char *policy_error(int errno_val) {
 // the string does not correspond to an encryption mode.
 static uint8_t string_to_mode(const char *str) {
   uint8_t i;
-  for (i = 1; i < NUM_ENCRYPTION_MODES; ++i) {
+  for (i = 1; i < ARRAY_SIZE(mode_strings); i++) {
     if (strcmp(str, mode_strings[i]) == 0) {
       return i;
     }
@@ -179,7 +179,7 @@ static uint8_t string_to_mode(const char *str) {
 // Converts the encryption mode to a human-readable string. Returns "INVALID" if
 // the mode is not a valid encryption mode.
 static const char *mode_to_string(uint8_t mode) {
-  if (mode >= NUM_ENCRYPTION_MODES) {
+  if (mode >= ARRAY_SIZE(mode_strings)) {
     mode = 0;
   }
   return mode_strings[mode];
@@ -188,8 +188,8 @@ static const char *mode_to_string(uint8_t mode) {
 // Converts an amount of padding (as a string) into the appropriate padding
 // flag. Returns -1 if the flag is invalid.
 static int string_to_padding_flag(const char *str) {
-  int i, padding = atoi(str);
-  for (i = 0; i < NUM_PADDING_VALUES; ++i) {
+  int padding = atoi(str);
+  for (size_t i = 0; i < ARRAY_SIZE(padding_values); i++) {
     if (padding == padding_values[i]) {
       return i;
     }
