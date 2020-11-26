@@ -23,8 +23,6 @@ NAME = fscryptctl
 INSTALL ?= install
 DESTDIR ?= /usr/local/bin
 
-C_FILES = $(shell find . -type f -name "*.h" -o -name "*.c")
-
 # IMAGE will be the path to our test ext4 image file.
 IMAGE ?= $(NAME)_image
 
@@ -83,13 +81,20 @@ ifeq ("$(wildcard $(MOUNT))","")
 endif
 	python -m pytest test.py -s -q
 
-# Format all the Go and C code
+# Format the source code
+
+FILES_TO_FORMAT := $(shell find . -type f -name "*.h" -o -name "*.c")
+
+# Don't format fscrypt_uapi.h, so that it stays identical to the kernel version.
+FILES_TO_FORMAT := $(filter-out ./fscrypt_uapi.h,$(FILES_TO_FORMAT))
+
 .PHONY: format format-check
 format:
-	clang-format -i -style=Google $(C_FILES)
+	clang-format -i -style=Google $(FILES_TO_FORMAT)
 
 format-check:
-	@clang-format -i -style=Google -output-replacements-xml $(C_FILES) \
+	@clang-format -i -style=Google -output-replacements-xml \
+		$(FILES_TO_FORMAT) \
 	| grep "<replacement " \
 	| ./input_fail.py "Incorrectly formatted C files. Run \"make format\"."
 
