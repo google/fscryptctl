@@ -124,11 +124,6 @@ test-all:
 	$(MAKE) test
 	$(MAKE) test-teardown
 
-.PHONY: travis-install travis-script
-travis-install: test-setup
-
-travis-script: format-check fscryptctl test
-
 ##############################################################################
 
 # Installation, uninstallation, and cleanup targets
