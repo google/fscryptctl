@@ -36,6 +36,10 @@
 #include "keyutils.h"
 #include "sha512.h"
 
+#ifndef VERSION
+#define VERSION "v0.1.0"  // Update on each new release!!
+#endif
+
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
 // Although the kernel always allows 64-byte keys, it may allow shorter keys

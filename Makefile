@@ -37,14 +37,9 @@ CPPFLAGS ?=
 # Linker flags
 LDFLAGS ?=
 
-##############################################################################
-
-# Update on each new release!!
-RELEASE_VERSION = 0.1.0
-
 # Pass the version to the command line program (pulled from tags).
-TAG_VERSION = $(shell git describe --tags 2>/dev/null)
-VERSION = $(if $(TAG_VERSION),$(TAG_VERSION),$(RELEASE_VERSION))
+VERSION ?= $(shell git describe --tags 2>/dev/null)
+override CPPFLAGS += $(if $(VERSION),-DVERSION="\"$(VERSION)\"")
 
 ##############################################################################
 
@@ -58,7 +53,7 @@ fscryptctl: $(OBJ)
 	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $+
 
 $(OBJ): %.o: %.c $(HDRS)
-	$(CC) -o $@ -c $(CPPFLAGS) $(CFLAGS) -DVERSION="\"$(VERSION)\"" $<
+	$(CC) -o $@ -c $(CPPFLAGS) $(CFLAGS) $<
 
 ##############################################################################
 
