@@ -20,6 +20,8 @@
  * the License.
  */
 
+#define _GNU_SOURCE  // For O_CLOEXEC
+
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
