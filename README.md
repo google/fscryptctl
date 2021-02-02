@@ -30,7 +30,7 @@ before using `fscryptctl`.
 ## Building and Installing
 
 To build `fscryptctl`, run `make`.  The only build dependencies are GNU Make and
-a C compiler.
+a C compiler (only C99 is needed).
 
 To install `fscryptctl`, run `sudo make install`.
 
