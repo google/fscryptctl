@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Exit with 1 if any input is provided. Print the input to stdout, unless an
 # argument is specified. In that case, print the argument instead.

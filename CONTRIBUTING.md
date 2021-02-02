@@ -24,18 +24,29 @@ information on using pull requests.
 
 ## Before you submit a pull request
 
-When making any changes to `fscryptctl`, you will need the following commands:
-*   `make format` which formats all of the C code (requires `clang-format`)
-*   `make test` which runs the tests for fscryptctl (requires `python` and the
-    `pytest` and `keyutils` python packages). Note that to run all of the tests,
-    the environment variable `TEST_FILESYSTEM_ROOT` must be set to the
-    mountpoint of an ext4 filesystem setup for encryption that the user can
-    mount and unmount.
-*   `make all` - Runs the above commands and builds `fscryptctl`.
+When making any changes to `fscryptctl`, run the following commands:
+* `make format`, which formats the source code (requires `clang-format`)
+* `make test-all`, which builds `fscryptctl` and runs the tests.  The tests
+  require the `e2fsprogs` and `python3` packages, the `pytest` and `keyutils`
+  Python packages, and kernel support for ext4 encryption.
 
-Make sure all these commands are run and the tests pass before submitting a pull
-request. All the above dependencies can be installed with:
+The userspace dependencies can be installed with:
 ``` bash
-> sudo apt-get install python-pip libkeyutils-dev clang-format
-> sudo -H pip install -U pip pytest keyutils
+> sudo apt-get install e2fsprogs python3-pip libkeyutils-dev clang-format
+> sudo -H pip3 install -U pip pytest keyutils
+```
+
+Your Linux kernel must be version 5.4 or later and have the following
+configuration options enabled:
+```
+CONFIG_EXT4_FS
+CONFIG_FS_ENCRYPTION
+```
+
+Optionally, also enable the following kernel config options so that all
+encryption algorithms can be tested:
+```
+CONFIG_CRYPTO_ADIANTUM
+CONFIG_CRYPTO_SHA256
+CONFIG_CRYPTO_ESSIV	(if kernel is v5.5 or later)
 ```

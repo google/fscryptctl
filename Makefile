@@ -79,42 +79,50 @@ format-check:
 
 # Testing targets
 
-# IMAGE will be the path to our test ext4 image file.
-IMAGE ?= fscryptctl_image
-
-# MOUNT will be the path to the filesystem where our tests are run.
+# The 'test' target requires that $(TEST_DIR) point to a directory on a
+# filesystem that supports encryption.
 #
-# Running "make test-setup MOUNT=/foo/bar" creates a test filesystem at that
-#	location. Be sure to also run "make test-teardown MOUNT=/foo/bar".
-# Running "make test MOUNT=/foo/bar" will run all tests on that filesystem. By
-#       default, it is the one created with "make test-setup".
-MOUNT ?= /mnt/fscryptctl_mount
-export TEST_FILESYSTEM_ROOT = $(MOUNT)
+# 'test-setup' sets up the default TEST_DIR to point to a directory on a
+# temporary ext4 filesystem on a loopback device.  'test-teardown' cleans up
+# afterwards.  Note that both of these use 'sudo'.
+#
+# 'test-all' runs 'test-setup', 'test', and 'test-teardown'.
 
-.PHONY: root test
-root:
-ifneq ($(shell id -u),0)
-	$(error You must be root to execute this command)
-endif
+TEST_IMAGE ?= /tmp/fscryptctl-test-image
+TEST_DIR ?= /tmp/fscryptctl-test-dir
 
-test: fscryptctl root
-ifeq ("$(wildcard $(MOUNT))","")
-	$(error mountpoint $(MOUNT) does not exist, run "make test-setup")
-endif
-	python -m pytest test.py -s -q
+.PHONY: test test-setup test-teardown test-all
 
-.PHONY: test-setup test-teardown
-test-setup: root
-	dd if=/dev/zero of=$(IMAGE) bs=1M count=20
-	mkfs.ext4 -b 4096 -O encrypt -F $(IMAGE)
-	mkdir -p $(MOUNT)
-	mount -o rw,loop,user $(IMAGE) $(MOUNT)
-	chmod +777 $(MOUNT)
+test: fscryptctl
+	@if [ ! -e "$(TEST_DIR)" ]; then \
+		echo 1>&2 "Directory $(TEST_DIR) does not exist, run 'make test-setup'"; \
+		exit 1; \
+	fi
+	TEST_DIR="$(TEST_DIR)" PATH="$$PWD:$$PATH" \
+		 ENABLE_VALGRIND="$(ENABLE_VALGRIND)" \
+		 python3 -m pytest test.py -s -q
 
-test-teardown: root
-	umount $(MOUNT)
-	rmdir $(MOUNT)
-	rm -f $(IMAGE)
+# Depend on test-teardown so that anything already present is cleaned up first.
+test-setup:test-teardown
+	dd if=/dev/zero of="$(TEST_IMAGE)" bs=1M count=32
+	mkfs.ext4 -b 4096 -O encrypt -F "$(TEST_IMAGE)"
+	mkdir -p "$(TEST_DIR)"
+	sudo mount -o rw,loop "$(TEST_IMAGE)" "$(TEST_DIR)"
+	sudo sh -c 'chown $$SUDO_UID:$$SUDO_GID "$(TEST_DIR)"'
+	@echo
+	@echo "$(TEST_DIR) is now set up."
+
+test-teardown:
+	if mountpoint --quiet "$(TEST_DIR)"; then \
+		sudo umount "$(TEST_DIR)"; \
+	fi
+	rm -rf "$(TEST_DIR)"
+	rm -f "$(TEST_IMAGE)"
+
+test-all:
+	$(MAKE) test-setup
+	$(MAKE) test
+	$(MAKE) test-teardown
 
 .PHONY: travis-install travis-script
 travis-install: test-setup
@@ -134,6 +142,6 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/fscryptctl
 
 clean:
-	rm -f fscryptctl *.o *.pyc $(IMAGE)
+	rm -f fscryptctl *.o *.pyc
 	rm -rf __pycache__
-	rm -rf .cache
+	rm -rf .pytest_cache
