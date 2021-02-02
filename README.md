@@ -42,6 +42,12 @@ See the `Makefile` for compilation and installation options.
 runtime dependencies are the kernel and filesystem support for encryption.  In
 most cases that means the kernel must have been built `CONFIG_FS_ENCRYPTION=y`,
 and a command like `tune2fs -O encrypt` must have been run on the filesystem.
+
+Since v1.0, `fscryptctl` only supports v2 filesystem encryption policies.  This
+means that it must be used with Linux kernel 5.4 or later.   If you need support
+for v1 encryption policies, use an earlier version of `fscryptctl`.  However, be
+aware that v1 had some significant usability and security limitations.
+
 For more information about the kernel and filesystem prerequisites, see the
 [`fscrypt`
 documentation](https://github.com/google/fscrypt#runtime-dependencies),
@@ -58,37 +64,18 @@ tips](https://github.com/google/fscrypt#getting-encryption-not-enabled-on-an-ext
 * `fscryptctl get_policy` - get the encryption policy of a file or directory
 * `fscryptctl set_policy` - set the encryption policy of an empty directory
 
-There are also two deprecated commands:
-
-* `fscryptctl insert_key` - add a v1 policy key to the session keyring
-* `fscryptctl get_descriptor` - compute key descriptor for a v1 policy key
-
 Run `fscryptctl --help` for full usage details.
 
-The `add_key` and `insert_key` commands accept the encryption key in binary on
-standard input.  It is critical that this be a real cryptographic key (and not a
-passphrase, for example), since `fscryptctl` doesn't do key stretching itself.
-Obviously, don't store the raw encryption key alongside the encrypted files.
-(If you need support for passphrases, use `fscrypt` instead of `fscryptctl`.)
+The `add_key` command accepts the encryption key in binary on standard input.
+It is critical that this be a real cryptographic key (and not a passphrase, for
+example), since `fscryptctl` doesn't do key stretching itself.  Obviously, don't
+store the raw encryption key alongside the encrypted files.  (If you need
+support for passphrases, use `fscrypt` instead of `fscryptctl`.)
 
-`fscryptctl` supports both v1 and v2 encryption policies.  (An "encryption
-policy" refers to the way in which a directory is encrypted: a reference to a
-key, plus the encryption options.)  v2 encryption policies are supported by
-kernel 5.4 and later, and they should be used whenever possible, since they have
-various security and usability improvements over v1.  See the [kernel
-documentation](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html#limitations-of-v1-policies)
-for more details.
-
-From the `fscryptctl` user's perspective, v1 and v2 policies differ primarily in
-how encryption keys are managed.  Keys for v1 policies are placed into the Linux
-session keyring by `fscryptctl insert_key` and are identified by 16-character
-"key descriptors".  Keys for v2 policies are placed in a filesystem keyring
-using `fscryptctl add_key` and are identified by 32-character "key identifiers".
-
-`fscryptctl set_policy` accepts either a key descriptor, in which case it sets a
-v1 policy, or a key identifier, in which case it sets a v2 policy.  So
-effectively, `fscryptctl set_policy` will set a v1 policy if `fscryptctl
-insert_key` was used, or a v2 policy if `fscryptctl add_key` was used.
+After running the `add_key` command to add an encryption key to a filesystem,
+you can use the `set_policy` command to create an encrypted directory on that
+filesystem.  The encryption key is specified by the 32-character hex "key
+identifier" that was printed by `add_key`.  The directory must be empty.
 
 ## Example Usage
 

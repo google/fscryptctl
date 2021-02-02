@@ -35,14 +35,23 @@
 #include <unistd.h>
 
 #include "fscrypt_uapi.h"
-#include "keyutils.h"
-#include "sha512.h"
 
 #ifndef VERSION
 #define VERSION "v0.1.0"  // Update on each new release!!
 #endif
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+
+static void secure_wipe(void *v, size_t n) {
+#ifdef explicit_bzero
+  explicit_bzero(v, n);
+#else
+  volatile uint8_t *p = v;
+  while (n--) {
+    *p++ = 0;
+  }
+#endif
+}
 
 // Although the kernel always allows 64-byte keys, it may allow shorter keys
 // too, depending on the encryption mode(s) used.  The shortest key the kernel
@@ -95,16 +104,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "    specified mounted filesystem.\n"
       "  fscryptctl get_policy <file or directory>\n"
       "    Print out the encryption policy for the specified path.\n"
-      "  fscryptctl set_policy <key identifier or descriptor> <directory>\n"
+      "  fscryptctl set_policy <key identifier> <directory>\n"
       "    Set up an encryption policy on the specified directory with the\n"
-      "    specified key identifier or descriptor.\n"
-      "\nDeprecated commands (for v1 encryption policies):\n"
-      "  fscryptctl get_descriptor\n"
-      "    Read a key from stdin, and print the hex descriptor of the key.\n"
-      "  fscryptctl insert_key\n"
-      "    Read a key from stdin, insert the key into the current session\n"
-      "    keyring (or the user session keyring if a session keyring does not\n"
-      "    exist), and print the descriptor of the key.\n"
+      "    specified key identifier.\n"
       "\nOptions:\n"
       "    -h, --help\n"
       "        print this help screen\n"
@@ -126,19 +128,8 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "            optimize for UFS inline crypto hardware\n"
       "        --iv-ino-lblk-32\n"
       "            optimize for eMMC inline crypto hardware (not recommended)\n"
-      "    insert_key (deprecated)\n"
-      "        --ext4\n"
-      "            for use with an ext4 filesystem before kernel v4.8\n"
-      "        --f2fs\n"
-      "            for use with an F2FS filesystem before kernel v4.6\n"
       "\nNotes:\n"
-      "  On recent kernels (5.4 and later), use add_key and set_policy.\n"
-      "  In this case, keys are identified by 32-character hex strings\n"
-      "  (key identifiers).\n"
-      "\n"
-      "  On older kernels, use insert_key and set_policy to set a v1\n"
-      "  encryption policy.  In this case, keys are described by 16-character\n"
-      "  hex strings (key descriptors).\n"
+      "  Keys are identified by 32-character hex strings (key identifiers).\n"
       "\n"
       "  Raw keys are given on stdin in binary and usually must be 64 bytes.\n",
       out);
@@ -345,11 +336,6 @@ static bool get_policy(const char *path,
 
   arg->policy_size = sizeof(arg->policy);
   int ret = ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY_EX, arg);
-  if (ret != 0 && errno == ENOTTY) {
-    // The kernel may be too old to support FS_IOC_GET_ENCRYPTION_POLICY_EX.
-    // Try FS_IOC_GET_ENCRYPTION_POLICY instead.
-    ret = ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY, arg->policy.v1);
-  }
   close(fd);
 
   if (ret != 0) {
@@ -360,14 +346,8 @@ static bool get_policy(const char *path,
   return true;
 }
 
-#undef fscrypt_policy
-union fscrypt_policy {
-  uint8_t version;
-  struct fscrypt_policy_v1 v1;
-  struct fscrypt_policy_v2 v2;
-};
-
-static bool set_policy(const char *path, const union fscrypt_policy *policy) {
+static bool set_policy(const char *path,
+                       const struct fscrypt_policy_v2 *policy) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     fprintf(stderr, "error: opening %s: %s\n", path, strerror(errno));
@@ -691,40 +671,19 @@ static int cmd_set_policy(int argc, char *const argv[]) {
     fputs("error: must specify a key and a directory\n", stderr);
     return EXIT_FAILURE;
   }
-  const char *key_specifier = argv[0];
+  const char *key_identifier = argv[0];
   const char *path = argv[1];
 
-  // Initialize the encryption policy struct.  Determine the policy version by
-  // the length of the key specifier.  v1 uses a key descriptor of 8 bytes (16
-  // hex chars).  v2 uses a key identifier of 16 bytes (32 hex chars).
-  union fscrypt_policy policy = {};
-  switch (strlen(key_specifier) + 1 /* count the null terminator */) {
-    case FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE:
-      policy.version = FSCRYPT_POLICY_V1;
-      if (!hex_to_bytes(key_specifier, policy.v1.master_key_descriptor,
-                        FSCRYPT_KEY_DESCRIPTOR_SIZE)) {
-        fprintf(stderr, "error: invalid key descriptor: %s\n", key_specifier);
-        return EXIT_FAILURE;
-      }
-      policy.v1.contents_encryption_mode = contents_encryption_mode;
-      policy.v1.filenames_encryption_mode = filenames_encryption_mode;
-      policy.v1.flags = flags;
-      break;
-    case FSCRYPT_KEY_IDENTIFIER_HEX_SIZE:
-      policy.version = FSCRYPT_POLICY_V2;
-      if (!hex_to_bytes(key_specifier, policy.v2.master_key_identifier,
-                        FSCRYPT_KEY_IDENTIFIER_SIZE)) {
-        fprintf(stderr, "error: invalid key identifier: %s\n", key_specifier);
-        return EXIT_FAILURE;
-      }
-      policy.v2.contents_encryption_mode = contents_encryption_mode;
-      policy.v2.filenames_encryption_mode = filenames_encryption_mode;
-      policy.v2.flags = flags;
-      break;
-    default:
-      fprintf(stderr, "error: invalid key specifier: %s\n", key_specifier);
-      return EXIT_FAILURE;
+  // Initialize the encryption policy struct.
+  struct fscrypt_policy_v2 policy = {.version = FSCRYPT_POLICY_V2};
+  if (!hex_to_bytes(key_identifier, policy.master_key_identifier,
+                    FSCRYPT_KEY_IDENTIFIER_SIZE)) {
+    fprintf(stderr, "error: invalid key identifier: %s\n", key_identifier);
+    return EXIT_FAILURE;
   }
+  policy.contents_encryption_mode = contents_encryption_mode;
+  policy.filenames_encryption_mode = filenames_encryption_mode;
+  policy.flags = flags;
 
   // Set the encryption policy on the directory.
   if (!set_policy(path, &policy)) {
@@ -735,133 +694,6 @@ static int cmd_set_policy(int argc, char *const argv[]) {
 }
 
 // -----------------------------------------------------------------------------
-//                            Deprecated commands
-// -----------------------------------------------------------------------------
-
-// Service prefixes for encryption keys
-#define EXT4_KEY_DESC_PREFIX "ext4:"  // For ext4 before 4.8 kernel
-#define F2FS_KEY_DESC_PREFIX "f2fs:"  // For f2fs before 4.6 kernel
-#define MAX_KEY_DESC_PREFIX_SIZE 8
-
-// The descriptor is just the first 8 bytes of a double application of SHA512
-// formatted as hex (so 16 characters).
-static void compute_descriptor(
-    const uint8_t *raw_key, size_t keysize,
-    char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE]) {
-  uint8_t digest1[SHA512_DIGEST_LENGTH];
-  SHA512(raw_key, keysize, digest1);
-
-  uint8_t digest2[SHA512_DIGEST_LENGTH];
-  SHA512(digest1, SHA512_DIGEST_LENGTH, digest2);
-
-  bytes_to_hex(digest2, FSCRYPT_KEY_DESCRIPTOR_SIZE, descriptor_hex);
-  secure_wipe(digest1, SHA512_DIGEST_LENGTH);
-  secure_wipe(digest2, SHA512_DIGEST_LENGTH);
-}
-
-// Inserts the key into the current session keyring with type logon and the
-// service specified by service_prefix.
-static bool insert_logon_key(
-    const uint8_t *raw_key, size_t keysize,
-    const char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE],
-    const char *service_prefix) {
-  // We cannot add directly to KEY_SPEC_SESSION_KEYRING, as that will make a new
-  // session keyring if one does not exist, rather than adding it to the user
-  // session keyring.
-  int keyring_id = keyctl_get_keyring_ID(KEY_SPEC_SESSION_KEYRING, 0);
-  if (keyring_id < 0) {
-    return false;
-  }
-
-  char description[MAX_KEY_DESC_PREFIX_SIZE + FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  sprintf(description, "%s%s", service_prefix, descriptor_hex);
-
-  struct fscrypt_key payload = {.size = keysize};
-  memcpy(payload.raw, raw_key, keysize);
-
-  int key_id =
-      add_key("logon", description, &payload, sizeof(payload), keyring_id);
-
-  secure_wipe(payload.raw, keysize);
-  return key_id >= 0;
-}
-
-// (Deprecated) Computes the descriptor for a key passed via stdin.  This only
-// supports v1 encryption policies, not v2.
-static int cmd_get_descriptor(int argc, char *const argv[]) {
-  handle_no_options(&argc, &argv);
-  if (argc != 0) {
-    fputs("error: unexpected arguments\n", stderr);
-    return EXIT_FAILURE;
-  }
-
-  int status = EXIT_FAILURE;
-  uint8_t raw_key[FSCRYPT_MAX_KEY_SIZE];
-  size_t keysize = read_key(raw_key);
-  if (keysize == 0) {
-    goto cleanup;
-  }
-
-  char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  compute_descriptor(raw_key, keysize, descriptor_hex);
-  puts(descriptor_hex);
-  status = EXIT_SUCCESS;
-cleanup:
-  secure_wipe(raw_key, keysize);
-  return status;
-}
-
-// (Deprecated) Inserts a key read from stdin into the current session keyring.
-// This has the effect of unlocking files encrypted with that key.  This only
-// works for v1 encryption policies, not v2.  Use add_key for v2.
-static int cmd_insert_key(int argc, char *const argv[]) {
-  // Which prefix will be used in this program, changed via command line flag.
-  const char *service_prefix = FSCRYPT_KEY_DESC_PREFIX;
-
-  static const struct option insert_key_options[] = {
-      {"ext4", no_argument, NULL, 'e'},
-      {"f2fs", no_argument, NULL, 'f'},
-      {NULL, 0, NULL, 0}};
-
-  int ch;
-  while ((ch = getopt_long(argc, argv, "", insert_key_options, NULL)) != -1) {
-    switch (ch) {
-      case 'e':
-        service_prefix = EXT4_KEY_DESC_PREFIX;
-        break;
-      case 'f':
-        service_prefix = F2FS_KEY_DESC_PREFIX;
-        break;
-      default:
-        usage(stderr);
-    }
-  }
-  if (argc != optind) {
-    fputs("error: unexpected arguments\n", stderr);
-    return EXIT_FAILURE;
-  }
-
-  int status = EXIT_FAILURE;
-  uint8_t raw_key[FSCRYPT_MAX_KEY_SIZE];
-  size_t keysize = read_key(raw_key);
-  if (keysize == 0) {
-    goto cleanup;
-  }
-
-  char descriptor_hex[FSCRYPT_KEY_DESCRIPTOR_HEX_SIZE];
-  compute_descriptor(raw_key, keysize, descriptor_hex);
-  if (!insert_logon_key(raw_key, keysize, descriptor_hex, service_prefix)) {
-    fprintf(stderr, "error: inserting key: %s\n", strerror(errno));
-    goto cleanup;
-  }
-  puts(descriptor_hex);
-  status = EXIT_SUCCESS;
-cleanup:
-  secure_wipe(raw_key, keysize);
-  return status;
-}
-
-// -----------------------------------------------------------------------------
 //                            The main() function
 // -----------------------------------------------------------------------------
 
@@ -869,14 +701,9 @@ static const struct {
   const char *name;
   int (*func)(int argc, char *const argv[]);
 } commands[] = {
-    {"add_key", cmd_add_key},
-    {"remove_key", cmd_remove_key},
-    {"key_status", cmd_key_status},
-    {"get_policy", cmd_get_policy},
+    {"add_key", cmd_add_key},       {"remove_key", cmd_remove_key},
+    {"key_status", cmd_key_status}, {"get_policy", cmd_get_policy},
     {"set_policy", cmd_set_policy},
-    // deprecated commands
-    {"get_descriptor", cmd_get_descriptor},
-    {"insert_key", cmd_insert_key},
 };
 
 int main(int argc, char *const argv[]) {

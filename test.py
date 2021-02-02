@@ -27,7 +27,6 @@ invocations of fscryptctl with valgrind.
 
 See the CONTRIBUTING.md file for more information."""
 
-import keyutils
 import os
 import shutil
 import subprocess
@@ -53,25 +52,19 @@ if os.environ.get("ENABLE_VALGRIND") == "1":
                   "--error-exitcode={}".format(VALGRIND_ERROR_EXITCODE),
                   "--leak-check=full", "--errors-for-leak-kinds=all"] + FSCRYPTCTL
 
-# The list of test keys.  The expected key descriptors and key identifiers were
-# computed by generate_test_key_identifiers.py.
-#
-# Note that in the 64-byte key, the first and second groups of 32 bytes must be
-# different, in order for v1 encryption policies with AES-256-XTS to work.
+# The list of test keys.  The expected key identifiers were computed by
+# generate_test_key_identifiers.py.
 
 TEST_KEY = {
     "raw": (b"a" * 32) + (b"1" * 32),
-    "descriptor": "e355a76a11a1be18",
     "identifier": "912ae510a458723a839a9fad701538ac",
 }
 TEST_KEY_32B = {
     "raw": b"abcdefghijklmnopqrstuvwxyz0123456",
-    "descriptor": "e8dab99234bb312e",
     "identifier": "1c2d6754b6cc7daacb599875d7faf9bb",
 }
 TEST_KEY_16B = {
     "raw": b"abcdefghijklmnop",
-    "descriptor": "85baa174f0cb1142",
     "identifier": "7eb80af3f24ef086726a4cea3a154ce0",
 }
 TEST_KEYS = [TEST_KEY, TEST_KEY_32B, TEST_KEY_16B]
@@ -120,16 +113,6 @@ def list_filenames(directory):
     return filenames
 
 
-@pytest.fixture(scope="function")
-def session_keyring():
-    """This fixture creates a new anonymous session keyring and subscribes the
-    process to it.  The id of this keyring is returned.  On cleanup, the keyring
-    will be cleared."""
-    keyring_id = keyutils.join_session_keyring()
-    yield keyring_id
-    keyutils.clear(keyring_id)
-
-
 def cleanup_directory():
     """Cleans up by removing the test directory and all test keys which may have
     been added to the filesystem."""
@@ -143,10 +126,10 @@ def cleanup_directory():
 
 
 @pytest.fixture(scope="function")
-def directory(session_keyring):
+def directory():
     """This fixture returns an empty unencrypted directory on a filesystem that
     supports encryption.  It also ensures that the filesystem's keyring is clear
-    of any test keys and that the process has a new session keyring."""
+    of any test keys."""
     # Clean up first, in case a prior invocation of the tests was killed and
     # didn't execute the pytest tear-down procedure.
     cleanup_directory()
@@ -155,19 +138,15 @@ def directory(session_keyring):
     cleanup_directory()
 
 
-def describe_policy(path=TEST_DIR, version=2, key=TEST_KEY,
-                    contents="AES-256-XTS", filenames="AES-256-CTS",
-                    flags="PAD_32"):
+def describe_policy(path=TEST_DIR, key=TEST_KEY, contents="AES-256-XTS",
+                    filenames="AES-256-CTS", flags="PAD_32"):
     """Builds the expected output for a successful invocation of the get_policy
     command.  The arguments specify the settings used in the encryption policy
     as well as the path to the file or directory that has the policy."""
     path = path.replace(TEST_DIR, "TEST_DIR")
     out = "Encryption policy for {}:\n".format(path)
-    out += "\tPolicy version: {}\n".format(version)
-    if version == 1:
-        out += "\tMaster key descriptor: {}\n".format(key["descriptor"])
-    else:
-        out += "\tMaster key identifier: {}\n".format(key["identifier"])
+    out += "\tPolicy version: 2\n"
+    out += "\tMaster key identifier: {}\n".format(key["identifier"])
     out += "\tContents encryption mode: {}\n".format(contents)
     out += "\tFilenames encryption mode: {}\n".format(filenames)
     out += "\tFlags: {}".format(flags)
@@ -182,15 +161,7 @@ def check_policy(path, **kwargs):
     assert fscryptctl("get_policy", path) == expected_output
 
 
-def select_key_specifier(key, version):
-    """Returns either the descriptor or identifier of the given test key,
-    depending on which version of encryption policy it will be used for."""
-    if version == 1:
-        return key["descriptor"]
-    return key["identifier"]
-
-
-def prepare_encrypted_dir(directory, *set_policy_args, version=2,
+def prepare_encrypted_dir(directory, *set_policy_args,
                           key=TEST_KEY, expected_error=""):
     """Prepares an encrypted directory by (re-)creating the directory, adding
     the given encryption key to the appropriate keyring, and setting an
@@ -203,16 +174,12 @@ def prepare_encrypted_dir(directory, *set_policy_args, version=2,
     shutil.rmtree(directory, ignore_errors=True)
     os.mkdir(directory)
 
-    if version == 1:
-        # v1 encryption policy: add the key to the session keyring.
-        key_specifier = fscryptctl("insert_key", stdin=key["raw"])
-    else:
-        # v2 encryption policy: add the key to the filesystem keyring.
-        key_specifier = fscryptctl("add_key", directory, stdin=key["raw"])
-    assert key_specifier == select_key_specifier(key, version)
+    # Add the key to the filesystem keyring.
+    key_identifier = fscryptctl("add_key", directory, stdin=key["raw"])
+    assert key_identifier == key["identifier"]
 
     # Set the encryption policy on the directory.
-    fscryptctl("set_policy", key_specifier, directory, *set_policy_args,
+    fscryptctl("set_policy", key_identifier, directory, *set_policy_args,
                expected_error=expected_error)
     if expected_error:
         return
@@ -275,23 +242,20 @@ def test_set_policy_parameters():
 
 def test_set_get_policy(directory):
     """Tests getting and setting an encryption policy."""
-    for version in [1, 2]:
-        prepare_encrypted_dir(directory, version=version)
-        check_policy(directory, version=version)
+    prepare_encrypted_dir(directory)
+    check_policy(directory)
 
-        # get_policy should work on regular files too, not just directories.
-        file = os.path.join(TEST_DIR, "file")
-        with open(file, "w"):
-            pass
-        check_policy(file, version=version)
+    # get_policy should work on regular files too, not just directories.
+    file = os.path.join(TEST_DIR, "file")
+    with open(file, "w"):
+        pass
+    check_policy(file)
 
-        # set_policy should succeed if the directory already has the same
-        # policy, but fail if it already has a different policy.
-        fscryptctl("set_policy", select_key_specifier(TEST_KEY, version),
-                   directory)
-        fscryptctl("set_policy", select_key_specifier(TEST_KEY_32B, version),
-                   directory,
-                   expected_error="error: setting policy for TEST_DIR: file or directory already encrypted")
+    # set_policy should succeed if the directory already has the same
+    # policy, but fail if it already has a different policy.
+    fscryptctl("set_policy", TEST_KEY["identifier"], directory)
+    fscryptctl("set_policy", TEST_KEY_32B["identifier"], directory,
+               expected_error="error: setting policy for TEST_DIR: file or directory already encrypted")
 
 
 def test_get_policy_unencrypted_dir(directory):
@@ -324,10 +288,11 @@ def test_filename_like_option(directory):
     orig_cwd = os.getcwd()
     try:
         os.chdir(directory)
+        fscryptctl("add_key", ".", stdin=TEST_KEY["raw"])
         for subdir in ["-h", "-v", "--help", "--version"]:
             os.mkdir(subdir)
-            fscryptctl("set_policy", TEST_KEY["descriptor"], "--", subdir)
-            expected_output = describe_policy(path=subdir, version=1)
+            fscryptctl("set_policy", TEST_KEY["identifier"], "--", subdir)
+            expected_output = describe_policy(path=subdir)
             assert fscryptctl("get_policy", "--", subdir) == expected_output
     finally:
         os.chdir(orig_cwd)
@@ -336,29 +301,23 @@ def test_filename_like_option(directory):
 def test_set_get_policy_alternate_padding(directory):
     """Tests getting and setting an encryption policy with a non-default value
     for the filenames padding option."""
-    for version in [1, 2]:
-        for padding in [4, 8, 16, 32]:
-            prepare_encrypted_dir(directory, "--padding={}".format(padding),
-                                  version=version)
-            check_policy(directory, version=version,
-                         flags="PAD_{}".format(padding))
+    for padding in [4, 8, 16, 32]:
+        prepare_encrypted_dir(directory, "--padding={}".format(padding))
+        check_policy(directory, flags="PAD_{}".format(padding))
 
 
 def test_set_get_policy_aes_256_xts(directory):
     """Tests getting and setting an encryption policy that uses AES-256-XTS
     contents encryption and AES-256-CTS filenames encryption.  (Note that this
     is also the default setting, but this test tries it explicitly.)"""
-    for version in [1, 2]:
-        prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
-                              "--filenames=AES-256-CTS", version=version)
-        check_policy(directory, version=version, contents="AES-256-XTS",
-                     filenames="AES-256-CTS")
-        # AES-256-XTS expects a 64-byte key.  Shorter keys shouldn't work.
-        for key in [TEST_KEY_16B, TEST_KEY_32B]:
-            with pytest.raises(OSError):
-                prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
-                                      "--filenames=AES-256-CTS",
-                                      version=version, key=key)
+    prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
+                          "--filenames=AES-256-CTS")
+    check_policy(directory, contents="AES-256-XTS", filenames="AES-256-CTS")
+    # AES-256-XTS expects a 64-byte key.  Shorter keys shouldn't work.
+    for key in [TEST_KEY_16B, TEST_KEY_32B]:
+        with pytest.raises(OSError):
+            prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
+                                  "--filenames=AES-256-CTS", key=key)
 
 
 def test_set_get_policy_aes_128_cbc(directory):
@@ -374,14 +333,12 @@ def test_set_get_policy_aes_128_cbc(directory):
         assert "Package not installed" in str(e)
         pytest.skip("Kernel doesn't support AES-128-CBC encryption")
 
-    for version in [1, 2]:
-        # AES-128-CBC expects a key that is 16 bytes or longer.
-        for key in [TEST_KEY_16B, TEST_KEY_32B, TEST_KEY]:
-            prepare_encrypted_dir(directory, "--contents=AES-128-CBC",
-                                  "--filenames=AES-128-CTS",
-                                  version=version, key=key)
-            check_policy(directory, version=version, key=key,
-                         contents="AES-128-CBC", filenames="AES-128-CTS")
+    # AES-128-CBC expects a key that is 16 bytes or longer.
+    for key in [TEST_KEY_16B, TEST_KEY_32B, TEST_KEY]:
+        prepare_encrypted_dir(directory, "--contents=AES-128-CBC",
+                              "--filenames=AES-128-CTS", key=key)
+        check_policy(directory, key=key, contents="AES-128-CBC",
+                     filenames="AES-128-CTS")
 
 
 def test_set_get_policy_adiantum(directory):
@@ -397,53 +354,45 @@ def test_set_get_policy_adiantum(directory):
         assert "Package not installed" in str(e)
         pytest.skip("Kernel doesn't support Adiantum encryption")
 
-    for version in [1, 2]:
-        # The --direct-key flag is allowed with Adiantum.
-        for direct_key in [False, True]:
-            for padding in [4, 16, 32, None]:
-                set_policy_args = ["--contents=Adiantum",
-                                   "--filenames=Adiantum"]
+    # The --direct-key flag is allowed with Adiantum.
+    for direct_key in [False, True]:
+        for padding in [4, 16, 32, None]:
+            set_policy_args = ["--contents=Adiantum", "--filenames=Adiantum"]
 
-                # The padding and direct_key options both go in the flags field
-                # of the encryption policy, so make sure that one (or both) of
-                # them doesn't accidentally overwrite the other.
-                if padding and padding == 4:
-                    set_policy_args.append("--padding={}".format(padding))
-                if direct_key:
-                    set_policy_args.append("--direct-key")
-                if padding and padding != 4:
-                    set_policy_args.append("--padding={}".format(padding))
+            # The padding and direct_key options both go in the flags field
+            # of the encryption policy, so make sure that one (or both) of
+            # them doesn't accidentally overwrite the other.
+            if padding and padding == 4:
+                set_policy_args.append("--padding={}".format(padding))
+            if direct_key:
+                set_policy_args.append("--direct-key")
+            if padding and padding != 4:
+                set_policy_args.append("--padding={}".format(padding))
 
-                if padding:
-                    flags = "PAD_{}".format(padding)
-                else:
-                    flags = "PAD_32"
-                if direct_key:
-                    flags += ", DIRECT_KEY"
+            if padding:
+                flags = "PAD_{}".format(padding)
+            else:
+                flags = "PAD_32"
+            if direct_key:
+                flags += ", DIRECT_KEY"
 
-                # Adiantum expects a key that is 32 bytes or longer.
-                for key in [TEST_KEY_32B, TEST_KEY]:
-                    prepare_encrypted_dir(directory, *set_policy_args,
-                                          version=version, key=key)
-                    check_policy(directory, version=version, key=key,
-                                 contents="Adiantum", filenames="Adiantum",
-                                 flags=flags)
-                with pytest.raises(OSError):
-                    prepare_encrypted_dir(directory, "--contents=Adiantum",
-                                          "--filenames=Adiantum",
-                                          version=version, key=TEST_KEY_16B)
+            # Adiantum expects a key that is 32 bytes or longer.
+            for key in [TEST_KEY_32B, TEST_KEY]:
+                prepare_encrypted_dir(directory, *set_policy_args, key=key)
+                check_policy(directory, key=key, contents="Adiantum",
+                             filenames="Adiantum", flags=flags)
+            with pytest.raises(OSError):
+                prepare_encrypted_dir(directory, "--contents=Adiantum",
+                                      "--filenames=Adiantum", key=TEST_KEY_16B)
 
 
 def test_set_get_policy_iv_ino_lblk_64(directory):
     """Tests getting and setting an encryption policy that uses the
     IV_INO_LBLK_64 flag."""
-    # This flag is not supported by v1 policies.
-    prepare_encrypted_dir(directory, "--iv-ino-lblk-64", version=1,
-                          expected_error="error: setting policy for TEST_DIR: invalid encryption options provided")
-    # This flag may be supported by v2 policies.  The filesystem may need to
-    # have been formatted with '-O stable_inodes', so it won't always work.
+    # This flag may not always be accepted, as on some filesystems it is only
+    # allowed if the filesystem was formatted with '-O stable_inodes'.
     try:
-        prepare_encrypted_dir(directory, "--iv-ino-lblk-64", version=2)
+        prepare_encrypted_dir(directory, "--iv-ino-lblk-64")
     except SystemError as e:
         assert "invalid encryption options provided" in str(e)
 
@@ -451,66 +400,43 @@ def test_set_get_policy_iv_ino_lblk_64(directory):
 def test_set_get_policy_iv_ino_lblk_32(directory):
     """Tests getting and setting an encryption policy that uses the
     IV_INO_LBLK_32 flag."""
-    # This flag is not supported by v1 policies.
-    prepare_encrypted_dir(directory, "--iv-ino-lblk-32", version=1,
-                          expected_error="error: setting policy for TEST_DIR: invalid encryption options provided")
-    # This flag may be supported by v2 policies.  The filesystem may need to
-    # have been formatted with '-O stable_inodes', so it won't always work.
+    # This flag may not always be accepted, as on some filesystems it is only
+    # allowed if the filesystem was formatted with '-O stable_inodes'.
     try:
-        prepare_encrypted_dir(directory, "--iv-ino-lblk-32", version=2)
+        prepare_encrypted_dir(directory, "--iv-ino-lblk-32")
     except SystemError as e:
         assert "invalid encryption options provided" in str(e)
 
 
 def test_set_policy_bad_padding(directory):
     """Tests that the set_policy command rejects unrecognized padding flags."""
-    for version in [1, 2]:
-        prepare_encrypted_dir(directory, "--padding=0", version=version,
-                              expected_error="error: invalid padding: 0")
+    prepare_encrypted_dir(directory, "--padding=0",
+                          expected_error="error: invalid padding: 0")
 
 
 def test_set_policy_bad_mode(directory):
     """Tests that the set_policy command rejects unrecognized encryption
     modes."""
-    for version in [1, 2]:
-        for mode_type in ["contents", "filenames"]:
-            prepare_encrypted_dir(directory, "--{}=foo".format(mode_type),
-                                  version=version,
-                                  expected_error="error: invalid {} mode: foo".format(mode_type))
+    for mode_type in ["contents", "filenames"]:
+        prepare_encrypted_dir(directory, "--{}=foo".format(mode_type),
+                              expected_error="error: invalid {} mode: foo".format(mode_type))
 
 
 def test_set_policy_bad_mode_combination(directory):
     """ Tests setting and using an encryption policy with a combination of
     encryption modes that isn't supported by the kernel."""
-    for version in [1, 2]:
-        # AES-256 must be paired with AES-128.
-        prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
-                              "--filenames=AES-128-CTS", version=version,
-                              expected_error="error: setting policy for TEST_DIR: invalid encryption options provided")
+    # AES-256 must be paired with AES-128.
+    prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
+                          "--filenames=AES-128-CTS",
+                          expected_error="error: setting policy for TEST_DIR: invalid encryption options provided")
 
 
 def test_set_policy_bad_key(directory):
-    """Tests that the set_policy command expects a valid key descriptor or
-    identifier."""
-    # Try a string whose length matches neither a descriptor nor an identifier.
+    """Tests that the set_policy command expects a valid key identifier."""
     fscryptctl("set_policy", "bad", directory,
-               expected_error="error: invalid key specifier: bad")
-    # Try an invalid 16-character key descriptor.
-    fscryptctl("set_policy", "X" * 16, directory,
-               expected_error="error: invalid key descriptor: " + "X" * 16)
-    # Try an invalid 32-character key identifier.
+               expected_error="error: invalid key identifier: bad")
     fscryptctl("set_policy", "X" * 32, directory,
                expected_error="error: invalid key identifier: " + "X" * 32)
-
-
-def check_keysize_limits(command):
-    """Helper function which checks that a command which accepts a key on
-    standard input correctly validates the key length."""
-    for keysize in range(16):
-        fscryptctl(*command, stdin=b"X" * keysize,
-                   expected_error="error: key was too short; it must be at least 16 bytes")
-    fscryptctl(*command, stdin=b"X" * 65,
-               expected_error="error: key was too long; it can be at most 64 bytes")
 
 
 def test_key_status_parameters():
@@ -567,7 +493,11 @@ def test_add_key_parameters():
 
 def test_add_key_validates_keysize(directory):
     """Tests that the add_key command expects a key with a valid size."""
-    check_keysize_limits(["add_key", directory])
+    for keysize in range(16):
+        fscryptctl("add_key", directory, stdin=b"X" * keysize,
+                   expected_error="error: key was too short; it must be at least 16 bytes")
+    fscryptctl("add_key", directory, stdin=b"X" * 65,
+               expected_error="error: key was too long; it can be at most 64 bytes")
 
 
 def test_add_key_needs_directory():
@@ -687,61 +617,3 @@ def test_remove_key_locks_files(directory):
     with pytest.raises(FileNotFoundError):
         open(nokey_path, "r")
     assert list_filenames(directory) == [filename]
-
-
-def test_get_descriptor_parameters():
-    """Tests that the get_descriptor command doesn't expect any positional
-    parameters."""
-    fscryptctl("get_descriptor", "foo",
-               expected_error="error: unexpected arguments")
-
-
-def test_get_descriptor_validates_keysize():
-    """Tests that the get_descriptor command expects a key with a valid size."""
-    check_keysize_limits(["get_descriptor"])
-
-
-def test_get_descriptor():
-    """Tests the get_descriptor command."""
-    for key in TEST_KEYS:
-        desc = key["descriptor"]
-        assert fscryptctl("get_descriptor", stdin=key["raw"]) == desc
-        assert fscryptctl("get_descriptor", "--", stdin=key["raw"]) == desc
-
-
-def test_insert_key_parameters():
-    """Tests that the insert_key command doesn't expect any positional
-    parameters."""
-    fscryptctl("insert_key", "foo",
-               expected_error="error: unexpected arguments")
-
-
-def test_insert_key_validates_keysize():
-    """Tests that the insert_key command expects a key with a valid size."""
-    check_keysize_limits(["insert_key"])
-
-
-def test_insert_key(session_keyring):
-    """Tests the insert_key command."""
-    for args, prefix in [([], "fscrypt:"), (["--ext4"], "ext4:"),
-                         (["--f2fs"], "f2fs:")]:
-        for key in TEST_KEYS:
-            output = fscryptctl("insert_key", *args, stdin=key["raw"])
-            assert output == key["descriptor"]
-
-            description = bytes(prefix + key["descriptor"], "utf-8")
-
-            # Key should be in the keyring.
-            id1 = keyutils.search(session_keyring, description,
-                                  keyType=b"logon")
-            assert id1 is not None
-
-            # Accessing the session keyring should give the same result.
-            id2 = keyutils.search(keyutils.KEY_SPEC_SESSION_KEYRING,
-                                  description, keyType=b"logon")
-            assert id1 == id2
-
-            # There should not be keys of type user.
-            id3 = keyutils.search(keyutils.KEY_SPEC_SESSION_KEYRING,
-                                  description, keyType=b"user")
-            assert id3 is None

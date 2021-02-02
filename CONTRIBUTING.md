@@ -27,13 +27,13 @@ information on using pull requests.
 When making any changes to `fscryptctl`, run the following commands:
 * `make format`, which formats the source code (requires `clang-format`)
 * `make test-all`, which builds `fscryptctl` and runs the tests.  The tests
-  require the `e2fsprogs` and `python3` packages, the `pytest` and `keyutils`
-  Python packages, and kernel support for ext4 encryption.
+  require the `e2fsprogs` and `python3` packages, the `pytest` Python package,
+  and kernel support for ext4 encryption.
 
 The userspace dependencies can be installed with:
 ``` bash
-> sudo apt-get install e2fsprogs python3-pip libkeyutils-dev clang-format
-> sudo -H pip3 install -U pip pytest keyutils
+> sudo apt-get install e2fsprogs python3-pip clang-format
+> sudo -H pip3 install -U pip pytest
 ```
 
 Your Linux kernel must be version 5.4 or later and have the following
