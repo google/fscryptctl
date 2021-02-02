@@ -44,7 +44,7 @@
 
 #include "sha512.h"
 
-#include <string.h>  // (memset_s or explicit_bzero if available)
+#include <string.h>  // (explicit_bzero if available)
 
 #if defined(_MSC_VER) || defined(__WATCOMC__)
 #define UL64(x) x##ui64
@@ -54,9 +54,7 @@
 
 /* We either use dedicated memory clearing functions or volatile dereference. */
 void secure_wipe(uint8_t *v, uint32_t n) {
-#if defined memset_s
-  memset_s(v, n, 0, n);
-#elif defined explicit_bzero
+#ifdef explicit_bzero
   explicit_bzero(v, n);
 #else
   volatile uint8_t *p = v;
