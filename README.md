@@ -1,5 +1,8 @@
 # fscryptctl
 
+[![Build Status](https://github.com/google/fscryptctl/workflows/CI/badge.svg)](https://github.com/google/fscryptctl/actions?query=workflow%3ACI+branch%3Amaster)
+[![License](https://img.shields.io/badge/LICENSE-Apache2.0-ff69b4.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
+
 `fscryptctl` is a low-level tool written in C that handles raw keys and manages
 policies for [Linux filesystem
 encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html),
