@@ -1,7 +1,8 @@
-# test.py - Runs tests for the fscryptctl binary
 #
-# Copyright 2017 Google Inc.
-# Author: Joe Richey (joerichey@google.com)
+# Copyright 2017, 2020 Google LLC
+#
+# Authors: Joe Richey (joerichey@google.com),
+#          Eric Biggers (ebiggers@google.com)
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
@@ -14,228 +15,605 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under
 # the License.
+#
 
-import keyutils
-import pytest
+"""This is a pytest module which tests the fscryptctl binary.
+
+The fscryptctl binary to test must be on the PATH, and the environment variable
+TEST_DIR must point to a directory on a filesystem that supports encryption.
+
+The environment variable ENABLE_VALGRIND may also be set to 1 to wrap all
+invocations of fscryptctl with valgrind.
+
+See the CONTRIBUTING.md file for more information."""
+
 import os
+import shutil
+import subprocess
 
-key_length = 64 # 512 bit keys
-test_env_var = "TEST_FILESYSTEM_ROOT"
-test_data = "some test file data"
+import pytest
 
-# Key descriptor test cases generated using:
-#   printf <key_contents>
-#       | sha512sum --binary
-#       | head --bytes=128
-#       | xxd -r -p
-#       | sha512sum --binary
-#       | head --bytes=16
+# Retrieve the test directory from the environment.
+RAW_TEST_DIR = os.environ.get("TEST_DIR")
+if not RAW_TEST_DIR:
+    raise SystemError("Need to set TEST_DIR")
+if not os.path.isdir(RAW_TEST_DIR):
+    raise SystemError("Directory " + RAW_TEST_DIR + " does not exist")
+# Actually use a subdirectory of $TEST_DIR instead of $TEST_DIR itself, in case
+# $TEST_DIR is the filesystem's root directory.  Filesystem root directories are
+# nonempty (since they contain "lost+found") and can't be encrypted.
+TEST_DIR = os.path.join(RAW_TEST_DIR, "test")
 
-# The first and second groups of 256 bits must be different.
-half_length = key_length/2
-test_key = (b'a' * half_length) + (b'1' * half_length)
-test_descriptor = b'e355a76a11a1be18'
-key_tests = [
-    (test_key, test_descriptor),
-    ((b'b' * half_length) + (b'2' * half_length), b'89bb6950c691e91a'),
-    ((b'c' * half_length) + (b'3' * half_length), b'338561500b313743'),
-]
+# Determine how the fscryptctl binary will be invoked.
+FSCRYPTCTL = ["fscryptctl"]
+VALGRIND_ERROR_EXITCODE = 100
+if os.environ.get("ENABLE_VALGRIND") == "1":
+    FSCRYPTCTL = ["valgrind", "--quiet",
+                  "--error-exitcode={}".format(VALGRIND_ERROR_EXITCODE),
+                  "--leak-check=full", "--errors-for-leak-kinds=all"] + FSCRYPTCTL
+
+# The list of test keys.  The expected key identifiers were computed by
+# generate_test_key_identifiers.py.
+
+TEST_KEY = {
+    "raw": (b"a" * 32) + (b"1" * 32),
+    "identifier": "912ae510a458723a839a9fad701538ac",
+}
+TEST_KEY_32B = {
+    "raw": b"abcdefghijklmnopqrstuvwxyz0123456",
+    "identifier": "1c2d6754b6cc7daacb599875d7faf9bb",
+}
+TEST_KEY_16B = {
+    "raw": b"abcdefghijklmnop",
+    "identifier": "7eb80af3f24ef086726a4cea3a154ce0",
+}
+TEST_KEYS = [TEST_KEY, TEST_KEY_32B, TEST_KEY_16B]
 
 
-def first_line(text):
-    """ returns the first line of text without a newline """
-    return text.split('\n', 1)[0]
+def postprocess_output(output):
+    """Decodes the stdout or stderr output of fscryptctl and replaces any
+    references to the path of TEST_DIR with the literal string "TEST_DIR" so
+    that the output is the same regardless of the location of TEST_DIR."""
+    return output.decode("utf-8").strip().replace(TEST_DIR, "TEST_DIR")
 
 
-def invoke(binary_path, stdin, *args):
-    """ Calls the binary at binary_path with the specified stdin and arguments.
-    If the command completes successfully, returns the first line of stdin. On
-    failure, raises an error with the first line of stderr. """
-    from subprocess import Popen, PIPE, CalledProcessError
-
-    p = Popen([binary_path] + list(args), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+def fscryptctl(*args, stdin=b"", expected_error=""):
+    """Executes the fscryptctl program with the given arguments and returns the
+    text (if any) that it printed to standard output.  |stdin| is the bytes to
+    pass on standard input.  By default the program is expected to succeed.  If
+    instead |expected_error| is nonempty, then it is expected to fail and print
+    the given error message to stderr."""
+    p = subprocess.Popen(FSCRYPTCTL + list(args), stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = p.communicate(stdin)
+    stdout = postprocess_output(stdout)
+    stderr = postprocess_output(stderr)
 
-    # Check for errors
+    # Check for errors.
     if p.returncode != 0:
-        if stderr != "":
-            raise SystemError(first_line(stderr))
-        else:
-            raise CalledProcessError(p.returncode, binary_path)
+        assert p.returncode != VALGRIND_ERROR_EXITCODE, stderr
+        if expected_error:
+            assert stderr == expected_error
+            return stdout
+        if stderr:
+            raise SystemError(stderr)
+        raise subprocess.CalledProcessError(p.returncode, "fscryptctl")
 
-    return first_line(stdout)
-
-def device(mountpoint):
-    """ Returns the device of a mountpoint. """
-    from subprocess import check_output
-    for line in check_output(['mount', '-l']).split('\n'):
-        parts = line.split()
-        if len(parts) > 2 and parts[2] == mountpoint:
-            return parts[0]
-    raise SystemError("No device for: " + mountpoint)
-
-def remount(mountpoint):
-    """ Remounts the filesystem and clears the inode cache. """
-    dev = device(mountpoint)
-    invoke("umount", "", mountpoint)
-    invoke("mount", "", "-t", "ext4", dev, mountpoint)
-
-def write_file(path):
-    """ writes some sample data to the file at path """
-    with open(path, "w+") as f:
-        f.write(test_data)
+    assert not stderr
+    assert not expected_error
+    return stdout
 
 
-def read_file(path):
-    """ reads some data from the file at path """
-    with open(path, "r") as f:
-        return f.read()
+def list_filenames(directory):
+    """Lists the filenames in the given directory."""
+    filenames = []
+    with os.scandir(directory) as it:
+        for entry in it:
+            filenames.append(entry.name)
+    return filenames
 
 
-@pytest.fixture(scope="module")
-def program():
-    """ This fixture provides a lambda which, when called, passes the first
-    argument as stdin and the subsequent arguments as command-line arguments to
-    the fscryptctl binary. """
-
-    # Get the fscryptctl binary path
-    dir_path = os.path.dirname(os.path.realpath(__file__))
-    binary_path = os.path.join(dir_path, "fscryptctl")
-
-    def invoke_fscryptctl(stdin, *args):
-        return invoke(binary_path, stdin, *args)
-
-    return invoke_fscryptctl
+def cleanup_directory():
+    """Cleans up by removing the test directory and all test keys which may have
+    been added to the filesystem."""
+    shutil.rmtree(TEST_DIR, ignore_errors=True)
+    for key in TEST_KEYS:
+        try:
+            fscryptctl("remove_key", key["identifier"], RAW_TEST_DIR)
+        except SystemError as e:
+            # It is okay if the key doesn't exist.
+            assert str(e) == "error: removing key: Required key not available"
 
 
-@pytest.yield_fixture(scope='function')
-def keyring():
-    """ This fixture creates a new anonymous session keyring and subscribes the
-    process to it. The id of this keyring is returned. On cleanup, the keyring
-    will be cleared. """
-    keyring_id = keyutils.join_session_keyring()
-    yield keyring_id
-    keyutils.clear(keyring_id)
+@pytest.fixture(scope="function")
+def directory():
+    """This fixture returns an empty unencrypted directory on a filesystem that
+    supports encryption.  It also ensures that the filesystem's keyring is clear
+    of any test keys."""
+    # Clean up first, in case a prior invocation of the tests was killed and
+    # didn't execute the pytest tear-down procedure.
+    cleanup_directory()
+    os.mkdir(TEST_DIR)
+    yield TEST_DIR
+    cleanup_directory()
 
 
-@pytest.yield_fixture(scope='module')
-def filesystem():
-    """ This fixture returns the mountpoint of the designated testing
-    filesystem. Before the path is returned and on cleanup, the filesystem is
-    unmounted and remounted to clear any cached keys. Throws if the required
-    environment variable is not set. """
-    mountpoint = os.environ.get(test_env_var)
-    if mountpoint == None:
-        raise SystemError("Need to set: " + test_env_var)
-
-    remount(mountpoint)
-    yield mountpoint
-    remount(mountpoint)
-
-
-@pytest.yield_fixture(scope='function')
-def directory(filesystem):
-    """ Returns a new testing directory on the testing filesystem. """
-    from shutil import rmtree
-    test_dir = os.path.join(filesystem, "test")
-
-    os.mkdir(test_dir)
-    yield test_dir
-    rmtree(test_dir)
+def describe_policy(path=TEST_DIR, key=TEST_KEY, contents="AES-256-XTS",
+                    filenames="AES-256-CTS", flags="PAD_32"):
+    """Builds the expected output for a successful invocation of the get_policy
+    command.  The arguments specify the settings used in the encryption policy
+    as well as the path to the file or directory that has the policy."""
+    path = path.replace(TEST_DIR, "TEST_DIR")
+    out = "Encryption policy for {}:\n".format(path)
+    out += "\tPolicy version: 2\n"
+    out += "\tMaster key identifier: {}\n".format(key["identifier"])
+    out += "\tContents encryption mode: {}\n".format(contents)
+    out += "\tFilenames encryption mode: {}\n".format(filenames)
+    out += "\tFlags: {}".format(flags)
+    return out
 
 
-def test_get_descriptor(program):
-    """ Tests that the get_descriptor command returns the expected value """
-    for key, expected_descriptor in key_tests:
-        output = program(key, "get_descriptor")
-        assert output == expected_descriptor
+def check_policy(path, **kwargs):
+    """Runs the get_policy command on the given path and checks that its output
+    matches the output produced by running describe_policy() with the given
+    arguments."""
+    expected_output = describe_policy(path=path, **kwargs)
+    assert fscryptctl("get_policy", path) == expected_output
 
 
-def test_insert_key(program, keyring):
-    """ Tests that insert_key command actually puts the keys in the keyring """
-    for key, descriptor in key_tests:
-        # Inserting should give the appropriate descriptor
-        output = program(key, "insert_key")
-        assert output == descriptor
+def prepare_encrypted_dir(directory, *set_policy_args,
+                          key=TEST_KEY, expected_error=""):
+    """Prepares an encrypted directory by (re-)creating the directory, adding
+    the given encryption key to the appropriate keyring, and setting an
+    encryption policy on the directory using the given key and encryption
+    settings.  If |expected_error| is nonempty, then set_policy is expected to
+    fail with the given error message."""
 
-    # After insertion, check that all three keys are there
-    for _, descriptor in key_tests:
-        # Key should be in the keyring
-        id1 = keyutils.search(keyring, b'fscrypt:' +
-                              descriptor, keyType=b'logon')
-        assert id1 != None
+    # Re-create the directory, in case it already exists and is nonempty and/or
+    # is already encrypted.
+    shutil.rmtree(directory, ignore_errors=True)
+    os.mkdir(directory)
 
-        # Accessing the session keyring should give the same result
-        id2 = keyutils.search(keyutils.KEY_SPEC_SESSION_KEYRING, b'fscrypt:' +
-                              descriptor, keyType=b'logon')
-        assert id1 == id2
+    # Add the key to the filesystem keyring.
+    key_identifier = fscryptctl("add_key", directory, stdin=key["raw"])
+    assert key_identifier == key["identifier"]
 
-        # There should not be keys of type user
-        id3 = keyutils.search(keyutils.KEY_SPEC_SESSION_KEYRING, b'fscrypt:' +
-                              descriptor)
-        assert id3 == None
+    # Set the encryption policy on the directory.
+    fscryptctl("set_policy", key_identifier, directory, *set_policy_args,
+               expected_error=expected_error)
+    if expected_error:
+        return
 
+    # Try creating a directory, a regular file, and a symlink in the encrypted
+    # directory to verify that the encrypted directory seems to be working.
 
-def test_insert_flags(program, keyring):
-    """ tests that the insertion flags give the correct prefixes """
-    for flag, prefix in [("--ext4", b'ext4:'), ("--f2fs", b'f2fs:')]:
-        output = program(test_key, "insert_key", flag)
-        assert output == test_descriptor
+    subdir = os.path.join(directory, "subdir")
+    os.mkdir(subdir)
+    os.rmdir(subdir)
 
-        key_id = keyutils.search(
-            keyring, prefix + test_descriptor, keyType=b'logon')
-        assert key_id != None
+    file = os.path.join(directory, "file")
+    with open(file, "w") as f:
+        f.write("contents")
+    with open(file, "r") as f:
+        assert f.read() == "contents"
+    os.remove(file)
 
-
-def test_set_get_policy(program, directory):
-    """ tests that setting a policy on a directory then getting the policy
-    does not return an error. """
-    program("", "set_policy", test_descriptor, directory)
-    program("", "get_policy", directory)
-
-
-def test_set_get_policy_file(program, directory, keyring):
-    """ tests that setting a policy on a directory then getting the policy
-    for a file in that directory does not return an error. """
-    program("", "set_policy", test_descriptor, directory)
-    file = os.path.join(directory, "foo.txt")
-
-    # Should not be able to write file without key present
-    with pytest.raises(Exception) as e:
-        write_file(file)
-
-    program(test_key, "insert_key", "--ext4")
-    write_file(file)
-
-    program("", "get_policy", file)
+    symlink = os.path.join(directory, "symlink")
+    os.symlink("target", symlink)
+    assert os.readlink(symlink) == "target"
+    os.remove(symlink)
 
 
-def test_file_read(program, filesystem, directory, keyring):
-    """ tests that we can create an encrypted file, read it and then fail to
-    read it if the required key is not present """
-    program("", "set_policy", test_descriptor, directory)
-    program(test_key, "insert_key", "--ext4")
+def test_help():
+    """Tests that the help option is accepted."""
+    fscryptctl("-h")
+    fscryptctl("--help")
 
-    file = os.path.join(directory, "bar.txt")
-    write_file(file)
 
-    # Should be able to read with key in the keyring (even if we remount)
-    assert read_file(file) == test_data
-    remount(filesystem)
-    assert read_file(file) == test_data
+def test_version():
+    """Tests that the version option is accepted."""
+    fscryptctl("-v")
+    fscryptctl("--version")
 
-    # After key removed (and cache cleared), filename should not exist.
-    keyutils.clear(keyring)
-    remount(filesystem)
-    assert not os.path.isfile(file)
 
-    # There should be one encrypted file, and it should not be readable
-    [encryptedName] = os.listdir(directory)
-    encryptedFile = os.path.join(directory, encryptedName)
-    assert os.path.isfile(encryptedFile)
-    with pytest.raises(Exception) as e:
-        read_file(encryptedFile)
+def test_unknown_command():
+    """Tests that unknown commands are rejected."""
+    with pytest.raises(SystemError) as e:
+        fscryptctl("NONEXISTENT_COMMAND", )
+    first_line = str(e.value).split("\n", 1)[0]
+    assert first_line == "error: invalid command: NONEXISTENT_COMMAND"
 
-    # Putting the key back in should make the file readable again
-    program(test_key, "insert_key", "--ext4")
-    assert read_file(file) == test_data
+
+def test_get_policy_parameters():
+    """Tests that the get_policy command expects exactly one positional
+    parameter."""
+    for args in [[], ["foo", "bar"]]:
+        fscryptctl("get_policy", *args,
+                   expected_error="error: must specify a single file or directory")
+
+
+def test_set_policy_parameters():
+    """Tests that the set_policy command expects exactly two positional
+    parameters."""
+    for args in [[], ["foo"], ["foo bar baz"]]:
+        fscryptctl("set_policy", *args,
+                   expected_error="error: must specify a key and a directory")
+
+
+def test_set_get_policy(directory):
+    """Tests getting and setting an encryption policy."""
+    prepare_encrypted_dir(directory)
+    check_policy(directory)
+
+    # get_policy should work on regular files too, not just directories.
+    file = os.path.join(TEST_DIR, "file")
+    with open(file, "w"):
+        pass
+    check_policy(file)
+
+    # set_policy should succeed if the directory already has the same
+    # policy, but fail if it already has a different policy.
+    fscryptctl("set_policy", TEST_KEY["identifier"], directory)
+    fscryptctl("set_policy", TEST_KEY_32B["identifier"], directory,
+               expected_error="error: setting policy for TEST_DIR: file or directory already encrypted")
+
+
+def test_get_policy_unencrypted_dir(directory):
+    """Tests that the get_policy command fails on an unencrypted directory."""
+    fscryptctl("get_policy", directory,
+               expected_error="error: getting policy for TEST_DIR: file or directory not encrypted")
+
+
+def test_get_policy_nonexistent_dir():
+    """Tests that the get_policy command fails on a nonexistent directory."""
+    fscryptctl("get_policy", "NONEXISTENT",
+               expected_error="error: opening NONEXISTENT: No such file or directory")
+
+
+def test_set_policy_nonexistent_dir():
+    """Tests that the set_policy command fails on a nonexistent directory."""
+    fscryptctl("set_policy", TEST_KEY["identifier"], "NONEXISTENT",
+               expected_error="error: opening NONEXISTENT: No such file or directory")
+
+
+def test_set_policy_nonempty_dir(directory):
+    """Tests that the set_policy command fails on a nonempty directory."""
+    os.mkdir(os.path.join(directory, "subdir"))
+    fscryptctl("set_policy", TEST_KEY["identifier"], directory,
+               expected_error="error: setting policy for TEST_DIR: Directory not empty")
+
+
+def test_filename_like_option(directory):
+    """Tests that fscryptctl can operate on filenames that look like options."""
+    orig_cwd = os.getcwd()
+    try:
+        os.chdir(directory)
+        fscryptctl("add_key", ".", stdin=TEST_KEY["raw"])
+        for subdir in ["-h", "-v", "--help", "--version"]:
+            os.mkdir(subdir)
+            fscryptctl("set_policy", TEST_KEY["identifier"], "--", subdir)
+            expected_output = describe_policy(path=subdir)
+            assert fscryptctl("get_policy", "--", subdir) == expected_output
+    finally:
+        os.chdir(orig_cwd)
+
+
+def test_set_get_policy_alternate_padding(directory):
+    """Tests getting and setting an encryption policy with a non-default value
+    for the filenames padding option."""
+    for padding in [4, 8, 16, 32]:
+        prepare_encrypted_dir(directory, "--padding={}".format(padding))
+        check_policy(directory, flags="PAD_{}".format(padding))
+
+
+def test_set_get_policy_aes_256_xts(directory):
+    """Tests getting and setting an encryption policy that uses AES-256-XTS
+    contents encryption and AES-256-CTS filenames encryption.  (Note that this
+    is also the default setting, but this test tries it explicitly.)"""
+    prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
+                          "--filenames=AES-256-CTS")
+    check_policy(directory, contents="AES-256-XTS", filenames="AES-256-CTS")
+    # AES-256-XTS expects a 64-byte key.  Shorter keys shouldn't work.
+    for key in [TEST_KEY_16B, TEST_KEY_32B]:
+        with pytest.raises(OSError):
+            prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
+                                  "--filenames=AES-256-CTS", key=key)
+
+
+def test_set_get_policy_aes_128_cbc(directory):
+    """Tests getting and setting an encryption policy that uses AES-128-CBC
+    contents encryption and AES-128-CTS filenames encryption."""
+
+    # This algorithm isn't guaranteed to be available, so skip this test if the
+    # kernel lacks the crypto API support that is needed to run it.
+    try:
+        prepare_encrypted_dir(directory, "--contents=AES-128-CBC",
+                              "--filenames=AES-128-CTS")
+    except OSError as e:
+        assert "Package not installed" in str(e)
+        pytest.skip("Kernel doesn't support AES-128-CBC encryption")
+
+    # AES-128-CBC expects a key that is 16 bytes or longer.
+    for key in [TEST_KEY_16B, TEST_KEY_32B, TEST_KEY]:
+        prepare_encrypted_dir(directory, "--contents=AES-128-CBC",
+                              "--filenames=AES-128-CTS", key=key)
+        check_policy(directory, key=key, contents="AES-128-CBC",
+                     filenames="AES-128-CTS")
+
+
+def test_set_get_policy_adiantum(directory):
+    """Tests getting and setting an encryption policy that uses Adiantum
+    encryption."""
+
+    # This algorithm isn't guaranteed to be available, so skip this test if the
+    # kernel lacks the crypto API support that is needed to run it.
+    try:
+        prepare_encrypted_dir(directory, "--contents=Adiantum",
+                              "--filenames=Adiantum")
+    except OSError as e:
+        assert "Package not installed" in str(e)
+        pytest.skip("Kernel doesn't support Adiantum encryption")
+
+    # The --direct-key flag is allowed with Adiantum.
+    for direct_key in [False, True]:
+        for padding in [4, 16, 32, None]:
+            set_policy_args = ["--contents=Adiantum", "--filenames=Adiantum"]
+
+            # The padding and direct_key options both go in the flags field
+            # of the encryption policy, so make sure that one (or both) of
+            # them doesn't accidentally overwrite the other.
+            if padding and padding == 4:
+                set_policy_args.append("--padding={}".format(padding))
+            if direct_key:
+                set_policy_args.append("--direct-key")
+            if padding and padding != 4:
+                set_policy_args.append("--padding={}".format(padding))
+
+            if padding:
+                flags = "PAD_{}".format(padding)
+            else:
+                flags = "PAD_32"
+            if direct_key:
+                flags += ", DIRECT_KEY"
+
+            # Adiantum expects a key that is 32 bytes or longer.
+            for key in [TEST_KEY_32B, TEST_KEY]:
+                prepare_encrypted_dir(directory, *set_policy_args, key=key)
+                check_policy(directory, key=key, contents="Adiantum",
+                             filenames="Adiantum", flags=flags)
+            with pytest.raises(OSError):
+                prepare_encrypted_dir(directory, "--contents=Adiantum",
+                                      "--filenames=Adiantum", key=TEST_KEY_16B)
+
+
+def test_set_get_policy_iv_ino_lblk_64(directory):
+    """Tests getting and setting an encryption policy that uses the
+    IV_INO_LBLK_64 flag."""
+    # This flag may not always be accepted, as on some filesystems it is only
+    # allowed if the filesystem was formatted with '-O stable_inodes'.
+    try:
+        prepare_encrypted_dir(directory, "--iv-ino-lblk-64")
+    except SystemError as e:
+        assert "invalid encryption options provided" in str(e)
+
+
+def test_set_get_policy_iv_ino_lblk_32(directory):
+    """Tests getting and setting an encryption policy that uses the
+    IV_INO_LBLK_32 flag."""
+    # This flag may not always be accepted, as on some filesystems it is only
+    # allowed if the filesystem was formatted with '-O stable_inodes'.
+    try:
+        prepare_encrypted_dir(directory, "--iv-ino-lblk-32")
+    except SystemError as e:
+        assert "invalid encryption options provided" in str(e)
+
+
+def test_set_policy_bad_padding(directory):
+    """Tests that the set_policy command rejects unrecognized padding flags."""
+    prepare_encrypted_dir(directory, "--padding=0",
+                          expected_error="error: invalid padding: 0")
+
+
+def test_set_policy_bad_mode(directory):
+    """Tests that the set_policy command rejects unrecognized encryption
+    modes."""
+    for mode_type in ["contents", "filenames"]:
+        prepare_encrypted_dir(directory, "--{}=foo".format(mode_type),
+                              expected_error="error: invalid {} mode: foo".format(mode_type))
+
+
+def test_set_policy_bad_mode_combination(directory):
+    """ Tests setting and using an encryption policy with a combination of
+    encryption modes that isn't supported by the kernel."""
+    # AES-256 must be paired with AES-128.
+    prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
+                          "--filenames=AES-128-CTS",
+                          expected_error="error: setting policy for TEST_DIR: invalid encryption options provided")
+
+
+def test_set_policy_bad_key(directory):
+    """Tests that the set_policy command expects a valid key identifier."""
+    fscryptctl("set_policy", "bad", directory,
+               expected_error="error: invalid key identifier: bad")
+    fscryptctl("set_policy", "X" * 32, directory,
+               expected_error="error: invalid key identifier: " + "X" * 32)
+
+
+def test_key_status_parameters():
+    """Tests that the key_status command expects exactly two positional
+    parameters."""
+    for args in [[], ["foo"], ["foo", "bar", "baz"]]:
+        fscryptctl("key_status", *args,
+                   expected_error="error: must specify a key identifier and a mountpoint")
+
+
+def test_key_status_needs_key_identifier(directory):
+    """Tests that the key_status command expects a valid key identifier."""
+    fscryptctl("key_status", "bad", directory,
+               expected_error="error: invalid key identifier: bad")
+
+
+def test_key_status_needs_directory():
+    """Tests that the key_status command expects an existing directory."""
+    fscryptctl("key_status", TEST_KEY["identifier"], "NONEXISTENT",
+               expected_error="error: opening NONEXISTENT: No such file or directory")
+
+
+def check_key_status(key, directory, status):
+    """Helper function which checks that the given key has the given status on
+    the filesystem that contains the given directory."""
+    assert fscryptctl("key_status", key["identifier"], directory) == status
+
+
+def check_key_present(key, directory):
+    """Helper function which checks that the given key is present on the
+    filesystem that contains the given directory."""
+    check_key_status(key, directory, "Present (user_count=1, added_by_self)")
+
+
+def check_key_absent(key, directory):
+    """Helper function which checks that the given key is absent from the
+    filesystem that contains the given directory."""
+    check_key_status(key, directory, "Absent")
+
+
+def check_key_incompletely_removed(key, directory):
+    """Helper function which checks that the given key is incompletely removed
+    from the filesystem that contains the given directory."""
+    check_key_status(key, directory, "Incompletely removed")
+
+
+def test_add_key_parameters():
+    """Tests that the add_key command expects exactly one positional
+    parameter."""
+    for args in [[], ["foo", "bar"]]:
+        fscryptctl("add_key", *args,
+                   expected_error="error: must specify a single mountpoint")
+
+
+def test_add_key_validates_keysize(directory):
+    """Tests that the add_key command expects a key with a valid size."""
+    for keysize in range(16):
+        fscryptctl("add_key", directory, stdin=b"X" * keysize,
+                   expected_error="error: key was too short; it must be at least 16 bytes")
+    fscryptctl("add_key", directory, stdin=b"X" * 65,
+               expected_error="error: key was too long; it can be at most 64 bytes")
+
+
+def test_add_key_needs_directory():
+    """Tests that the add_key command expects an existing directory."""
+    fscryptctl("add_key", "NONEXISTENT", stdin=TEST_KEY["raw"],
+               expected_error="error: opening NONEXISTENT: No such file or directory")
+
+
+def test_add_key(directory):
+    """Tests adding some encryption keys and getting their statuses."""
+    for key in TEST_KEYS:
+        check_key_absent(key, directory)
+        assert fscryptctl("add_key", directory,
+                          stdin=key["raw"]) == key["identifier"]
+        check_key_present(key, directory)
+
+
+def test_remove_key_parameters():
+    """Tests that the remove_key command expects exactly two positional
+    parameters."""
+    for args in [[], ["foo"], ["foo", "bar", "baz"]]:
+        fscryptctl("remove_key", *args,
+                   expected_error="error: must specify a key identifier and a mountpoint")
+
+
+def test_remove_key_needs_key_identifier(directory):
+    """Tests that the remove_key command expects a valid key identifier."""
+    fscryptctl("remove_key", "bad", directory,
+               expected_error="error: invalid key identifier: bad")
+
+
+def test_remove_key_needs_key(directory):
+    """Tests that the remove_key command expects an existing key."""
+    fscryptctl("remove_key", b"0" * 32, directory,
+               expected_error="error: removing key: Required key not available")
+
+
+def test_remove_key_needs_directory():
+    """Tests that the remove_key command expects an existing directory."""
+    fscryptctl("remove_key", TEST_KEY["identifier"], "NONEXISTENT",
+               expected_error="error: opening NONEXISTENT: No such file or directory")
+
+
+def test_remove_key(directory):
+    """Tests adding and removing some encryption keys, and getting their
+    statuses."""
+    for key in TEST_KEYS:
+        check_key_absent(key, directory)
+        identifier = fscryptctl("add_key", directory, stdin=key["raw"])
+        check_key_present(key, directory)
+        assert fscryptctl("remove_key", identifier, directory) == ""
+        check_key_absent(key, directory)
+
+
+def test_remove_key_incomplete(directory):
+    """Tests removing an encryption key when files using it are still in-use."""
+
+    prepare_encrypted_dir(directory)
+    file = os.path.join(directory, "file")
+
+    # Do add_key/remove_key/key_status on the parent directory so that these
+    # commands don't interfere with the test by causing the key to be in-use
+    # when the command opens the path it is given.
+    parent_dir = os.path.join(directory, "..")
+
+    check_key_present(TEST_KEY, parent_dir)
+    with open(file, "w"):
+        for _ in range(3):
+            # Since a file in the directory is still open, remove_key should
+            # print a warning and transition the key to the "Incompletely
+            # removed" state, not the "Absent" state.
+            expected_output = "warning: some files using this key are still in-use"
+            assert fscryptctl(
+                "remove_key", TEST_KEY["identifier"], parent_dir) == expected_output
+            check_key_incompletely_removed(TEST_KEY, parent_dir)
+
+    # Now that the directory is no longer in-use, remove_key should succeed
+    # and transition the key to the "Absent" state.
+    assert fscryptctl("remove_key", TEST_KEY["identifier"], parent_dir) == ""
+    check_key_absent(TEST_KEY, parent_dir)
+
+
+def test_remove_key_locks_files(directory):
+    """Tests that remove_key really "locks" access to files in an encrypted
+    directory, and that add_key restores access again."""
+    parent_dir = os.path.join(directory, "..")
+
+    # Create an encrypted directory.
+    prepare_encrypted_dir(directory)
+
+    # Create a regular file in the encrypted directory.
+    filename = "file"
+    file_path = os.path.join(directory, filename)
+    with open(file_path, "w") as f:
+        f.write("contents")
+
+    # Remove the directory's encryption key.
+    fscryptctl("remove_key", TEST_KEY["identifier"], parent_dir)
+
+    # The filenames should now be listed as no-key names.
+    nokey_filenames = list_filenames(directory)
+    assert len(nokey_filenames) == 1
+    nokey_path = os.path.join(directory, nokey_filenames[0])
+    assert nokey_filenames[0] != filename
+    with pytest.raises(FileNotFoundError):
+        open(file_path, "r")
+
+    # Opening a file via no-key name should fail.
+    with pytest.raises(OSError) as e:
+        open(nokey_path)
+    assert "Required key not available" in str(e.value)
+
+    # Adding the key should restore access to the file.
+    fscryptctl("add_key", parent_dir, stdin=TEST_KEY["raw"])
+    with open(file_path, "r") as f:
+        assert f.read() == "contents"
+    with pytest.raises(FileNotFoundError):
+        open(nokey_path, "r")
+    assert list_filenames(directory) == [filename]

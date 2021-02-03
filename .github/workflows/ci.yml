@@ -1,0 +1,126 @@
+#
+# Copyright 2020 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not
+# use this file except in compliance with the License. You may obtain a copy of
+# the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations under
+# the License.
+#
+
+name: CI
+on: [pull_request, push]
+env:
+  CFLAGS: -O2 -Wall -Werror
+  TEST_DEPENDENCIES: e2fsprogs python3 python3-pytest
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.compiler }})
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang $TEST_DEPENDENCIES
+    - name: Build and test
+      run: make test-all CC=${{ matrix.compiler }}
+    - name: C99 check
+      run: |
+        make clean
+        make CC=${{ matrix.compiler }} CFLAGS="$CFLAGS -std=c99"
+
+  build-and-test-32bit:
+    name: Build and test (32-bit)
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-multilib $TEST_DEPENDENCIES
+    - name: Build and test
+      run: make test-all CFLAGS="$CFLAGS -m32"
+
+  build-old-os:
+    name: Build (${{ matrix.os }})
+    # The tests require Ubuntu 20.04 or later for kernel 5.4.
+    # So on older versions we can only build, not test.
+    strategy:
+      matrix:
+        os: [ubuntu-16.04, ubuntu-18.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: make
+
+  build-and-test-valgrind:
+    name: Build and test (valgrind enabled)
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y valgrind $TEST_DEPENDENCIES
+    - name: Build and test
+      run: make test-all ENABLE_VALGRIND=1
+
+  build-and-test-ubsan:
+    name: Build and test (UBSAN enabled)
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang $TEST_DEPENDENCIES
+    - name: Build and test
+      run: make test-all CC=clang CFLAGS="$CFLAGS -fsanitize=undefined -fno-sanitize-recover=undefined"
+
+  build-and-test-asan:
+    name: Build and test (ASAN enabled)
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang $TEST_DEPENDENCIES
+    - name: Build and test
+      run: make test-all CC=clang CFLAGS="$CFLAGS -fsanitize=address -fno-sanitize-recover=address"
+
+  format-check:
+    name: Check source code formatting
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format
+    - name: Check source code formatting
+      run: make format-check
+
+  run-clang-static-analyzer:
+    name: Run clang static analyzer
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-tools
+    - name: Run clang static analyzer
+      run: scan-build --status-bugs make

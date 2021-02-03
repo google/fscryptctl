@@ -2,4 +2,6 @@ fscryptctl
 *.o
 .cache/
 __pycache__/
-
+cscope.*
+ncscope.*
+tags

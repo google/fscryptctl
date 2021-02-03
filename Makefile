@@ -1,7 +1,9 @@
 # Makefile for fscryptctl
 #
-# Copyright 2017 Google Inc.
-# Author: Joe Richey (joerichey@google.com)
+# Copyright 2017, 2020 Google LLC
+#
+# Authors: Joe Richey (joerichey@google.com),
+#          Eric Biggers (ebiggers@google.com)
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
@@ -15,113 +17,121 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
-# Update on each new release!!
-RELEASE_VERSION = 0.1.0
+##############################################################################
 
-NAME = fscryptctl
+# Makefile options.  These can be overridden on the command line,
+# e.g. make PREFIX=/usr or PREFIX=/usr make.
 
-INSTALL ?= install
-DESTDIR ?= /usr/local/bin
+# Installation path prefix
+PREFIX ?= /usr/local
 
-C_FILES = $(shell find . -type f -name "*.h" -o -name "*.c")
+# Directory where the binary gets installed
+BINDIR ?= $(PREFIX)/bin
 
-# IMAGE will be the path to our test ext4 image file.
-IMAGE ?= $(NAME)_image
-
-# MOUNT will be the path to the filesystem where our tests are run.
-#
-# Running "make test-setup MOUNT=/foo/bar" creates a test filesystem at that
-#	location. Be sure to also run "make test-teardown MOUNT=/foo/bar".
-# Running "make all MOUNT=/foo/bar" (or "make go") will run all tests on that
-# 	filesystem. By default, it is the one created with "make test-setup".
-MOUNT ?= /mnt/$(NAME)_mount
-export TEST_FILESYSTEM_ROOT = $(MOUNT)
-
-# The flags code below lets the caller of the makefile change the build flags
-# for fscryptctl in a familiar manner.
-#	CFLAGS
-#		Change the flags passed to the C compiler. Default = "-O2 -Wall"
-#		For example:
-#			make "CFLAGS = -O3 -Werror"
-#		builds the C code with high optimizations, and C warnings fail.
-#	LDFLAGS
-#		Change the flags passed to the C linker. Empty by default.
-#		For example (on my system with additional dev packages):
-#			make "LDFLAGS = -static"
-#		will build a static fscrypt binary.
-
-# Set the C flags so we don't need to set C flags in each CGO file.
+# C compiler flags
 CFLAGS ?= -O2 -Wall
 
+# C preprocessor flags
+CPPFLAGS ?=
+
+# Linker flags
+LDFLAGS ?=
+
 # Pass the version to the command line program (pulled from tags).
-TAG_VERSION = $(shell git describe --tags 2>/dev/null)
-VERSION = $(if $(TAG_VERSION),$(TAG_VERSION),$(RELEASE_VERSION))
+VERSION ?= $(shell git describe --tags 2>/dev/null)
+override CPPFLAGS += $(if $(VERSION),-DVERSION="\"$(VERSION)\"")
 
-.PHONY: default
-default: $(NAME)
+##############################################################################
 
-sha512.o: sha512.h sha512.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) sha512.c -c -o $@
+# Build the binary
 
-$(NAME).o: $(NAME).c sha512.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DVERSION="\"$(VERSION)\"" $(NAME).c -c -o $@
+SRC := $(wildcard *.c)
+OBJ := $(SRC:.c=.o)
+HDRS := $(wildcard *.h)
 
-$(NAME): $(NAME).o sha512.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+fscryptctl: $(OBJ)
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $+
 
-# Testing fscryptctl (need root permissions)
-.PHONY: root test
-root:
-ifneq ($(shell id -u),0)
-	$(error You must be root to execute this command)
-endif
+$(OBJ): %.o: %.c $(HDRS)
+	$(CC) -o $@ -c $(CPPFLAGS) $(CFLAGS) $<
 
-test: $(NAME) root
-ifeq ("$(wildcard $(MOUNT))","")
-	$(error mountpoint $(MOUNT) does not exist, run "make test-setup")
-endif
-	python -m pytest test.py -s -q
+##############################################################################
 
-# Format all the Go and C code
+# Don't format fscrypt_uapi.h, so that it stays identical to the kernel version.
+FILES_TO_FORMAT := $(filter-out fscrypt_uapi.h, $(SRC) $(HDRS))
+
 .PHONY: format format-check
 format:
-	clang-format -i -style=Google $(C_FILES)
+	clang-format -i -style=Google $(FILES_TO_FORMAT)
 
 format-check:
-	@clang-format -i -style=Google -output-replacements-xml $(C_FILES) \
+	@clang-format -i -style=Google -output-replacements-xml \
+		$(FILES_TO_FORMAT) \
 	| grep "<replacement " \
 	| ./input_fail.py "Incorrectly formatted C files. Run \"make format\"."
 
-# Installation, uninstallation, and cleanup code
+##############################################################################
+
+# Testing targets
+
+# The 'test' target requires that $(TEST_DIR) point to a directory on a
+# filesystem that supports encryption.
+#
+# 'test-setup' sets up the default TEST_DIR to point to a directory on a
+# temporary ext4 filesystem on a loopback device.  'test-teardown' cleans up
+# afterwards.  Note that both of these use 'sudo'.
+#
+# 'test-all' runs 'test-setup', 'test', and 'test-teardown'.
+
+TEST_IMAGE ?= /tmp/fscryptctl-test-image
+TEST_DIR ?= /tmp/fscryptctl-test-dir
+
+.PHONY: test test-setup test-teardown test-all
+
+test: fscryptctl
+	@if [ ! -e "$(TEST_DIR)" ]; then \
+		echo 1>&2 "Directory $(TEST_DIR) does not exist, run 'make test-setup'"; \
+		exit 1; \
+	fi
+	TEST_DIR="$(TEST_DIR)" PATH="$$PWD:$$PATH" \
+		 ENABLE_VALGRIND="$(ENABLE_VALGRIND)" \
+		 python3 -m pytest test.py -s -q
+
+# Depend on test-teardown so that anything already present is cleaned up first.
+test-setup:test-teardown
+	dd if=/dev/zero of="$(TEST_IMAGE)" bs=1M count=32
+	mkfs.ext4 -b 4096 -O encrypt -F "$(TEST_IMAGE)"
+	mkdir -p "$(TEST_DIR)"
+	sudo mount -o rw,loop "$(TEST_IMAGE)" "$(TEST_DIR)"
+	sudo sh -c 'chown $$SUDO_UID:$$SUDO_GID "$(TEST_DIR)"'
+	@echo
+	@echo "$(TEST_DIR) is now set up."
+
+test-teardown:
+	if mountpoint --quiet "$(TEST_DIR)"; then \
+		sudo umount "$(TEST_DIR)"; \
+	fi
+	rm -rf "$(TEST_DIR)"
+	rm -f "$(TEST_IMAGE)"
+
+test-all:
+	$(MAKE) test-setup
+	$(MAKE) test
+	$(MAKE) test-teardown
+
+##############################################################################
+
+# Installation, uninstallation, and cleanup targets
+
 .PHONY: install uninstall clean
-install: $(NAME)
-	$(INSTALL) -d $(DESTDIR)
-	$(INSTALL) $(NAME) $(DESTDIR)
+install: fscryptctl
+	install -d $(DESTDIR)$(BINDIR)
+	install -m755 $< $(DESTDIR)$(BINDIR)
 
 uninstall:
-	rm -f $(DESTDIR)/$(NAME)
+	rm -f $(DESTDIR)$(BINDIR)/fscryptctl
 
 clean:
-	rm -f $(NAME) *.o *.pyc $(IMAGE)
-	rm -rf .cache
+	rm -f fscryptctl *.o *.pyc
 	rm -rf __pycache__
-
-##### Setup/Teardown for integration tests (need root permissions) #####
-.PHONY: test-setup test-teardown
-test-setup: root
-	dd if=/dev/zero of=$(IMAGE) bs=1M count=20
-	mkfs.ext4 -b 4096 -O encrypt -F $(IMAGE)
-	mkdir -p $(MOUNT)
-	mount -o rw,loop,user $(IMAGE) $(MOUNT)
-	chmod +777 $(MOUNT)
-
-test-teardown: root
-	umount $(MOUNT)
-	rmdir $(MOUNT)
-	rm -f $(IMAGE)
-
-##### Travis CI Commands
-.PHONY: travis-install travis-script
-travis-install: test-setup
-
-travis-script: format-check default test
+	rm -rf .pytest_cache
