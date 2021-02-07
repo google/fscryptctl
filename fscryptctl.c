@@ -416,7 +416,7 @@ cleanup:
 }
 
 static int cmd_remove_key(int argc, char *const argv[]) {
-  int ioc = FS_IOC_REMOVE_ENCRYPTION_KEY;
+  unsigned long ioc = FS_IOC_REMOVE_ENCRYPTION_KEY;
 
   static const struct option remove_key_options[] = {
       {"all-users", no_argument, NULL, OPT_ALL_USERS}, {NULL, 0, NULL, 0}};
