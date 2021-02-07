@@ -416,7 +416,7 @@ cleanup:
 }
 
 static int cmd_remove_key(int argc, char *const argv[]) {
-  int ioc = FS_IOC_REMOVE_ENCRYPTION_KEY;
+  unsigned long ioc = FS_IOC_REMOVE_ENCRYPTION_KEY;
 
   static const struct option remove_key_options[] = {
       {"all-users", no_argument, NULL, OPT_ALL_USERS}, {NULL, 0, NULL, 0}};
@@ -440,7 +440,7 @@ static int cmd_remove_key(int argc, char *const argv[]) {
   const char *key_identifier = argv[0];
   const char *mountpoint = argv[1];
 
-  struct fscrypt_remove_key_arg arg = {};
+  struct fscrypt_remove_key_arg arg = {0};
   if (!build_key_specifier(key_identifier, &arg.key_spec)) {
     return EXIT_FAILURE;
   }
@@ -476,7 +476,7 @@ static int cmd_key_status(int argc, char *const argv[]) {
   const char *key_identifier = argv[0];
   const char *mountpoint = argv[1];
 
-  struct fscrypt_get_key_status_arg arg = {};
+  struct fscrypt_get_key_status_arg arg = {0};
   if (!build_key_specifier(key_identifier, &arg.key_spec)) {
     return EXIT_FAILURE;
   }
@@ -589,7 +589,7 @@ static int cmd_get_policy(int argc, char *const argv[]) {
   }
   const char *path = argv[0];
 
-  struct fscrypt_get_policy_ex_arg arg = {};
+  struct fscrypt_get_policy_ex_arg arg = {0};
   if (!get_policy(path, &arg)) {
     return EXIT_FAILURE;
   }

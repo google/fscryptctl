@@ -39,10 +39,10 @@ jobs:
         sudo apt-get install -y clang $TEST_DEPENDENCIES
     - name: Build and test
       run: make test-all CC=${{ matrix.compiler }}
-    - name: C99 check
+    - name: C99/pedantic check
       run: |
         make clean
-        make CC=${{ matrix.compiler }} CFLAGS="$CFLAGS -std=c99"
+        make CC=${{ matrix.compiler }} CFLAGS="$CFLAGS -std=c99 -Wextra -pedantic"
 
   build-and-test-32bit:
     name: Build and test (32-bit)
