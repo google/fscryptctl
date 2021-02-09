@@ -37,7 +37,7 @@
 #include "fscrypt_uapi.h"
 
 #ifndef VERSION
-#define VERSION "v0.1.0"  // Update on each new release!!
+#define VERSION "v1.0.0"  // Update on each new release!!
 #endif
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
