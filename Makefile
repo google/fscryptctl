@@ -28,6 +28,8 @@ PREFIX ?= /usr/local
 # Directory where the binary gets installed
 BINDIR ?= $(PREFIX)/bin
 
+HW_CRYPTO_SUPPORT ?= 0
+
 # C compiler flags
 CFLAGS ?= -O2 -Wall
 
@@ -36,6 +38,8 @@ CPPFLAGS ?=
 
 # Linker flags
 LDFLAGS ?=
+
+CFLAGS += -DHW_CRYPTO_SUPPORT=$(HW_CRYPTO_SUPPORT)
 
 # Pass the version to the command line program (pulled from tags).
 VERSION ?= $(shell git describe --tags 2>/dev/null)

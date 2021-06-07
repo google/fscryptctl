@@ -82,6 +82,7 @@ enum {
   OPT_CONTENTS,
   OPT_DIRECT_KEY,
   OPT_FILENAMES,
+  OPT_HW_BACKED,
   OPT_IV_INO_LBLK_32,
   OPT_IV_INO_LBLK_64,
   OPT_PADDING,
@@ -112,6 +113,11 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "        print this help screen\n"
       "    -v, --version\n"
       "        print the version of fscrypt\n"
+#if HW_CRYPTO_SUPPORT
+      "    add_key\n"
+      "        --hw-backed\n"
+      "            Use a hardware-backed crypto engine\n"
+#endif
       "    remove_key\n"
       "        --all-users\n"
       "            force-remove all users' claims to the key (requires root)\n"
@@ -370,7 +376,27 @@ static bool set_policy(const char *path,
 // -----------------------------------------------------------------------------
 
 static int cmd_add_key(int argc, char *const argv[]) {
+#if HW_CRYPTO_SUPPORT
+  static const struct option add_key_options[] = {
+      {"hw-backed", no_argument, NULL, OPT_HW_BACKED},
+      {NULL, 0, NULL, 0}};
+
+  __u32 flags = 0;
+  int ch;
+  while ((ch = getopt_long(argc, argv, "", add_key_options, NULL)) != -1) {
+    switch (ch) {
+      case OPT_HW_BACKED:
+        flags |= __FSCRYPT_ADD_KEY_FLAG_HW_WRAPPED;
+        break;
+      default:
+        usage(stderr);
+    }
+  }
+  argc -= optind;
+  argv += optind;
+#else
   handle_no_options(&argc, &argv);
+#endif
   if (argc != 1) {
     fputs("error: must specify a single mountpoint\n", stderr);
     return EXIT_FAILURE;
@@ -390,6 +416,10 @@ static int cmd_add_key(int argc, char *const argv[]) {
     goto cleanup;
   }
   arg->key_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
+
+#if HW_CRYPTO_SUPPORT
+  arg->__flags = flags;
+#endif
 
   int fd = open(mountpoint, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
