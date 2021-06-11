@@ -1,4 +1,5 @@
 fscryptctl
+fscryptctl.1
 *.o
 .cache/
 __pycache__/
