@@ -28,6 +28,9 @@ PREFIX ?= /usr/local
 # Directory where the binary gets installed
 BINDIR ?= $(PREFIX)/bin
 
+# Direectory where the man page gets installed
+MANDIR ?= $(PREFIX)/share/man
+
 # C compiler flags
 CFLAGS ?= -O2 -Wall
 
@@ -54,6 +57,13 @@ fscryptctl: $(OBJ)
 
 $(OBJ): %.o: %.c $(HDRS)
 	$(CC) -o $@ -c $(CPPFLAGS) $(CFLAGS) $<
+
+##############################################################################
+
+# Build the manual page
+
+fscryptctl.1: fscryptctl.1.md
+	pandoc -s -t man $+ > $@
 
 ##############################################################################
 
@@ -123,15 +133,27 @@ test-all:
 
 # Installation, uninstallation, and cleanup targets
 
-.PHONY: install uninstall clean
-install: fscryptctl
+all:fscryptctl fscryptctl.1
+
+.PHONY: all install install-bin install-man uninstall clean
+
+install-bin: fscryptctl
 	install -d $(DESTDIR)$(BINDIR)
 	install -m755 $< $(DESTDIR)$(BINDIR)
 
+install-man: fscryptctl.1
+	install -d $(DESTDIR)$(MANDIR)/man1
+	install -m644 $< $(DESTDIR)$(MANDIR)/man1
+
+install:install-bin install-man
+
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/fscryptctl
+	rm -f $(DESTDIR)$(MANDIR)/man1/fscryptctl.1
 
 clean:
-	rm -f fscryptctl *.o *.pyc
+	rm -f fscryptctl fscryptctl.1 *.o *.pyc
 	rm -rf __pycache__
 	rm -rf .pytest_cache
+
+.DEFAULT_GOAL = all

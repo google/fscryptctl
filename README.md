@@ -32,10 +32,14 @@ before using `fscryptctl`.
 
 ## Building and Installing
 
-To build `fscryptctl`, run `make`.  The only build dependencies are GNU Make and
-a C compiler (only C99 is needed).
+To build, run `make`.  The build dependencies are GNU Make, a C compiler (only
+C99 is needed), and [pandoc](https://pandoc.org/).
 
-To install `fscryptctl`, run `sudo make install`.
+To install, run `sudo make install`.
+
+If you don't want to build and install the `fscryptctl.1` manual page, you can
+instead run `make fscryptctl` and `sudo make install-bin`.  This will build and
+install the `fscryptctl` binary only, avoiding the build dependency on `pandoc`.
 
 See the `Makefile` for compilation and installation options.
 
@@ -67,7 +71,8 @@ tips](https://github.com/google/fscrypt#getting-encryption-not-enabled-on-an-ext
 * `fscryptctl get_policy` - get the encryption policy of a file or directory
 * `fscryptctl set_policy` - set the encryption policy of an empty directory
 
-Run `fscryptctl --help` for full usage details.
+For full usage details, see the manual page (`man fscryptctl`), or alternatively
+run `fscryptctl --help`.
 
 The `add_key` command accepts the encryption key in binary on standard input.
 It is critical that this be a real cryptographic key (and not a passphrase, for
