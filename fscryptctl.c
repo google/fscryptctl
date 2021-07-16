@@ -131,7 +131,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "\nNotes:\n"
       "  Keys are identified by 32-character hex strings (key identifiers).\n"
       "\n"
-      "  Raw keys are given on stdin in binary and usually must be 64 bytes.\n",
+      "  Raw keys are given on stdin in binary and usually must be 64 bytes.\n"
+      "\n"
+      "  For more information, run `man fscryptctl`.\n",
       out);
 
   exit(out == stderr ? EXIT_FAILURE : EXIT_SUCCESS);
