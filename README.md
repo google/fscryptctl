@@ -74,11 +74,16 @@ tips](https://github.com/google/fscrypt#getting-encryption-not-enabled-on-an-ext
 For full usage details, see the manual page (`man fscryptctl`), or alternatively
 run `fscryptctl --help`.
 
-The `add_key` command accepts the encryption key in binary on standard input.
+The `add_key` command, by default, accepts the encryption key in binary on
+standard input.
 It is critical that this be a real cryptographic key (and not a passphrase, for
 example), since `fscryptctl` doesn't do key stretching itself.  Obviously, don't
 store the raw encryption key alongside the encrypted files.  (If you need
 support for passphrases, use `fscrypt` instead of `fscryptctl`.)
+
+Alternatively, `add_key --serial=$serial` will instruct the kernel to
+extract the kernel material from an existing key of type "fscrypt-provisioning"
+with the specified $serial (The ID returned and used by keyctl(1)).
 
 After running the `add_key` command to add an encryption key to a filesystem,
 you can use the `set_policy` command to create an encrypted directory on that

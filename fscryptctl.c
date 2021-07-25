@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -78,6 +79,7 @@ static const char *const mode_strings[] = {
 static const int padding_values[] = {4, 8, 16, 32};
 
 enum {
+  OPT_KEY_SERIAL,
   OPT_ALL_USERS,
   OPT_CONTENTS,
   OPT_DIRECT_KEY,
@@ -94,8 +96,8 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "  fscryptctl <command> [arguments] [options]\n"
       "\nCommands:\n"
       "  fscryptctl add_key <mountpoint>\n"
-      "    Read a key from stdin, add it to the specified mounted filesystem,\n"
-      "    and print its identifier.\n"
+      "    Add a key add to the specified mounted filesystem and print its\n"
+      "    identifier. Raw key is read from stdin by default.\n"
       "  fscryptctl remove_key <key identifier> <mountpoint>\n"
       "    Remove the key with the specified identifier from the specified\n"
       "    mounted filesystem.\n"
@@ -112,6 +114,10 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "        print this help screen\n"
       "    -v, --version\n"
       "        print the version of fscrypt\n"
+      "    add_key\n"
+      "        --serial=<serial>\n"
+      "            Instead of reading raw key material over stdin, use the\n"
+      "            payload of an existing \"fscrypt-provisioning\" key.\n"
       "    remove_key\n"
       "        --all-users\n"
       "            force-remove all users' claims to the key (requires root)\n"
@@ -129,7 +135,10 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "        --iv-ino-lblk-32\n"
       "            optimize for eMMC inline crypto hardware (not recommended)\n"
       "\nNotes:\n"
-      "  Keys are identified by 32-character hex strings (key identifiers).\n"
+      "  fscrypt keys are identified by 32-character hex strings\n"
+      "  (key identifiers).\n"
+      "\n"
+      "  Key serials are specified as decimal integers that fit into 31 bits.\n"
       "\n"
       "  Raw keys are given on stdin in binary and usually must be 64 bytes.\n"
       "\n"
@@ -267,6 +276,16 @@ static bool hex_to_bytes(const char *hex, uint8_t *bytes, size_t num_bytes) {
   return true;
 }
 
+// Converts a decimal string to a kernel key_serial_t
+static int32_t str_to_keyserial(const char *dec) {
+  char *endp;
+  unsigned long ret = strtoul(dec, &endp, 10);
+  if (ret < 1 || ret > INT32_MAX || *endp) {
+    return -1;
+  }
+  return ret;
+}
+
 // Builds a 'struct fscrypt_key_specifier' for passing to the kernel, given a
 // key identifier hex string.
 static bool build_key_specifier(const char *identifier_hex,
@@ -372,7 +391,27 @@ static bool set_policy(const char *path,
 // -----------------------------------------------------------------------------
 
 static int cmd_add_key(int argc, char *const argv[]) {
-  handle_no_options(&argc, &argv);
+  int32_t serial = 0;
+
+  static const struct option add_key_options[] = {
+      {"serial", required_argument, NULL, OPT_KEY_SERIAL}, {NULL, 0, NULL, 0}};
+
+  int ch;
+  while ((ch = getopt_long(argc, argv, "", add_key_options, NULL)) != -1) {
+    switch (ch) {
+      case OPT_KEY_SERIAL:
+        serial = str_to_keyserial(optarg);
+        if (serial < 0) {
+          fputs("error: must specify valid key id\n", stderr);
+          return EXIT_FAILURE;
+        }
+        break;
+      default:
+        usage(stderr);
+    }
+  }
+  argc -= optind;
+  argv += optind;
   if (argc != 1) {
     fputs("error: must specify a single mountpoint\n", stderr);
     return EXIT_FAILURE;
@@ -387,9 +426,13 @@ static int cmd_add_key(int argc, char *const argv[]) {
   }
 
   int status = EXIT_FAILURE;
-  arg->raw_size = read_key(arg->raw);
-  if (arg->raw_size == 0) {
-    goto cleanup;
+  if (serial) {
+    arg->key_id = serial;
+  } else {
+    arg->raw_size = read_key(arg->raw);
+    if (arg->raw_size == 0) {
+      goto cleanup;
+    }
   }
   arg->key_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
 
