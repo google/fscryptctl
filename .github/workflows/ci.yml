@@ -59,13 +59,10 @@ jobs:
       run: make test-all CFLAGS="$CFLAGS -m32"
 
   build-old-os:
-    name: Build (${{ matrix.os }})
+    name: Build (ubuntu-18.04)
     # The tests require Ubuntu 20.04 or later for kernel 5.4.
     # So on older versions we can only build, not test.
-    strategy:
-      matrix:
-        os: [ubuntu-16.04, ubuntu-18.04]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-18.04
     steps:
     - uses: actions/checkout@v2
     - name: Build
