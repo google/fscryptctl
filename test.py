@@ -313,8 +313,9 @@ def test_set_get_policy_aes_256_xts(directory):
     prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
                           "--filenames=AES-256-CTS")
     check_policy(directory, contents="AES-256-XTS", filenames="AES-256-CTS")
-    # AES-256-XTS expects a 64-byte key.  Shorter keys shouldn't work.
-    for key in [TEST_KEY_16B, TEST_KEY_32B]:
+    # AES-256-XTS is only allowed with master keys that are 32 bytes or longer.
+    # Shorter keys shouldn't work.
+    for key in [TEST_KEY_16B]:
         with pytest.raises(OSError):
             prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
                                   "--filenames=AES-256-CTS", key=key)
