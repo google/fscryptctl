@@ -88,10 +88,13 @@ identifier" that was printed by `add_key`.  The directory must be empty.
 ## Example Usage
 
 ```shell
-# Create and mount an ext4 filesystem that supports encryption.
+# Create an ext4 filesystem that supports encryption.
 # (Alternatively, use `tune2fs -O encrypt` on an existing ext4 filesystem.)
 # (For f2fs, use `mkfs.f2fs -O encrypt` or `fsck.f2fs -O encrypt`.)
 > mkfs.ext4 -O encrypt /dev/vdb
+
+# Mount the filesystem.  Optionally add any desired mount options, such as
+# `-o inlinecrypt` to make use of inline crypto hardware.
 > mount /dev/vdb /mnt
 
 # Generate a random 512-bit key and store it in a file.
