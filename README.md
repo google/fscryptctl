@@ -92,8 +92,9 @@ identifier" that was printed by `add_key`.  The directory must be empty.
 # (Alternatively, use `tune2fs -O encrypt` on an existing ext4 filesystem.)
 # (For f2fs, use `mkfs.f2fs -O encrypt` or `fsck.f2fs -O encrypt`.)
 > mkfs.ext4 -O encrypt /dev/vdb
-# To make use of inline crypto hardware, use:
-# `mount -o inlinecrypt /dev/vdb /mnt`
+
+# Mount the filesystem.  Optionally add any desired mount options, such as
+# `-o inlinecrypt` to make use of inline crypto hardware.
 > mount /dev/vdb /mnt
 
 # Generate a random 512-bit key and store it in a file.
