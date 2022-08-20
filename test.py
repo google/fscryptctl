@@ -387,6 +387,39 @@ def test_set_get_policy_adiantum(directory):
                                       "--filenames=Adiantum", key=TEST_KEY_16B)
 
 
+def test_set_get_policy_aes_256_hctr2(directory):
+    """Tests getting and setting an encryption policy that uses AES-256-HCTR2
+    filenames encryption.  Note that the kernel doesn't yet support
+    AES-256-HCTR2 contents encryption, so that is not tested."""
+
+    # Skip the test if the kernel lacks support for AES-256-HCTR2.
+    try:
+        prepare_encrypted_dir(directory, "--contents=AES-256-XTS",
+                              "--filenames=AES-256-HCTR2")
+    except SystemError as e:
+        # Old kernel that doesn't know about AES-256-HCTR2
+        assert "invalid encryption options provided" in str(e)
+        pytest.skip("Kernel doesn't support AES-256-HCTR2 encryption")
+    except OSError as e:
+        # New kernel that knows about AES-256-HCTR2, but doesn't have HCTR2
+        # support enabled in the crypto API.
+        assert "Package not installed" in str(e)
+        pytest.skip("Kernel doesn't support AES-256-HCTR2 encryption")
+
+    for padding in [4, 16, 32, None]:
+        set_policy_args = ["--contents=AES-256-XTS", "--filenames=AES-256-HCTR2"]
+        if padding:
+            set_policy_args.append("--padding={}".format(padding))
+            flags = "PAD_{}".format(padding)
+        else:
+            flags = "PAD_32"
+
+        for key in [TEST_KEY_32B, TEST_KEY]:
+            prepare_encrypted_dir(directory, *set_policy_args, key=key)
+            check_policy(directory, key=key, contents="AES-256-XTS",
+                         filenames="AES-256-HCTR2", flags=flags)
+
+
 def test_set_get_policy_iv_ino_lblk_64(directory):
     """Tests getting and setting an encryption policy that uses the
     IV_INO_LBLK_64 flag."""
