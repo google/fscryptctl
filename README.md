@@ -21,6 +21,8 @@ documentation for filesystem
 encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html)
 before using `fscryptctl`.
 
+For the release notes, see the [NEWS file](NEWS.md).
+
 ## Table of Contents
 
 - [Building and Installing](#building-and-installing)
