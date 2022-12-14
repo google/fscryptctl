@@ -115,12 +115,12 @@ Options accepted by **fscryptctl set_policy**:
 
 **\-\-contents**=*MODE*
 :   The cipher that will be used to encrypt file contents.  Valid options are
-    AES-256-XTS, AES-128-CBC, and Adiantum.  Default is AES-256-XTS.
+    AES-256-XTS, AES-128-CBC, SM4-XTS, and Adiantum.  Default is AES-256-XTS.
 
 **\-\-filenames**=*MODE*
 :   The cipher that will be used to encrypt filenames.  Valid options are
-    AES-256-CTS, AES-128-CTS, Adiantum, and AES-256-HCTR2.  Default is
-    AES-256-CTS.
+    AES-256-CTS, AES-128-CTS, SM4-CTS, Adiantum, and AES-256-HCTR2.  Default
+    is AES-256-CTS.
 
 **\-\-padding**=*BYTES*
 :   The number of bytes to which encrypted filename lengths will be aligned

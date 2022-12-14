@@ -72,6 +72,8 @@ static const char *const mode_strings[] = {
     [FSCRYPT_MODE_AES_256_CTS] = "AES-256-CTS",
     [FSCRYPT_MODE_AES_128_CBC] = "AES-128-CBC",
     [FSCRYPT_MODE_AES_128_CTS] = "AES-128-CTS",
+    [FSCRYPT_MODE_SM4_XTS] = "SM4-XTS",
+    [FSCRYPT_MODE_SM4_CTS] = "SM4-CTS",
     [FSCRYPT_MODE_ADIANTUM] = "Adiantum",
     [FSCRYPT_MODE_AES_256_HCTR2] = "AES-256-HCTR2",
 };

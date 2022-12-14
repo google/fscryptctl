@@ -342,6 +342,29 @@ def test_set_get_policy_aes_128_cbc(directory):
                      filenames="AES-128-CTS")
 
 
+def test_set_get_policy_sm4(directory):
+    """Tests getting and setting an encryption policy that uses SM4-XTS
+    contents encryption and SM4-CTS filenames encryption."""
+
+    # Skip the test if the kernel lacks support for SM4-XTS and SM4-CTS.
+    try:
+        prepare_encrypted_dir(directory, "--contents=SM4-XTS",
+                              "--filenames=SM4-CTS")
+    except SystemError as e:
+        # Old kernel that doesn't know about SM4-XTS and SM4-CTS
+        assert "invalid encryption options provided" in str(e)
+        pytest.skip("Kernel doesn't support SM4-XTS and SM4-CTS encryption")
+    except OSError as e:
+        assert "Package not installed" in str(e)
+        pytest.skip("Kernel doesn't support SM4-XTS and SM4-CTS encryption")
+
+    for key in [TEST_KEY_16B]:
+        prepare_encrypted_dir(directory, "--contents=SM4-XTS",
+                              "--filenames=SM4-CTS", key=key)
+        check_policy(directory, key=key, contents="SM4-XTS",
+                     filenames="SM4-CTS")
+
+
 def test_set_get_policy_adiantum(directory):
     """Tests getting and setting an encryption policy that uses Adiantum
     encryption."""
