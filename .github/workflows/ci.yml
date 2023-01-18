@@ -32,7 +32,7 @@ jobs:
     strategy:
       matrix:
         compiler: [gcc, clang]
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
@@ -48,7 +48,7 @@ jobs:
 
   build-and-test-32bit:
     name: Build and test (32-bit)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
@@ -58,22 +58,9 @@ jobs:
     - name: Build and test
       run: make test-all CFLAGS="$CFLAGS -m32"
 
-  build-old-os:
-    name: Build (ubuntu-18.04)
-    # The tests require Ubuntu 20.04 or later for kernel 5.4.
-    # So on older versions we can only build, not test.
-    runs-on: ubuntu-18.04
-    steps:
-    - uses: actions/checkout@v2
-    - name: Build
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y $BUILD_DEPENDENCIES
-        make
-
   build-and-test-valgrind:
     name: Build and test (valgrind enabled)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
@@ -85,7 +72,7 @@ jobs:
 
   build-and-test-ubsan:
     name: Build and test (UBSAN enabled)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
@@ -97,7 +84,7 @@ jobs:
 
   build-and-test-asan:
     name: Build and test (ASAN enabled)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
@@ -109,7 +96,7 @@ jobs:
 
   format-check:
     name: Check source code formatting
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
@@ -121,7 +108,7 @@ jobs:
 
   run-clang-static-analyzer:
     name: Run clang static analyzer
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
