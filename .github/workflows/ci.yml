@@ -34,7 +34,7 @@ jobs:
         compiler: [gcc, clang]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -50,7 +50,7 @@ jobs:
     name: Build and test (32-bit)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -62,7 +62,7 @@ jobs:
     name: Build and test (valgrind enabled)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -74,7 +74,7 @@ jobs:
     name: Build and test (UBSAN enabled)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -86,7 +86,7 @@ jobs:
     name: Build and test (ASAN enabled)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -98,7 +98,7 @@ jobs:
     name: Check source code formatting
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -110,7 +110,7 @@ jobs:
     name: Run clang static analyzer
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install dependencies
       run: |
         sudo apt-get update
