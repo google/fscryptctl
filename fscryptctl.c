@@ -38,7 +38,7 @@
 
 #ifndef VERSION
 // Update this on each new release, along with the NEWS.md file.
-#define VERSION "v1.0.0"
+#define VERSION "v1.1.0"
 #endif
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))

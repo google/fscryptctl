@@ -1,5 +1,15 @@
 # fscryptctl release notes
 
+## Version 1.1.0
+
+* Added a manual page for `fscryptctl`.
+
+* Added support for algorithms that the kernel recently added support for:
+  AES-256-HCTR2, SM4-XTS, and SM4-CTS.
+
+* Added a NEWS.md file that contains the release notes, and backfilled it from
+  the GitHub release notes.
+
 ## Version 1.0.0
 
 `fscryptctl` is now stable with release v1.0.0.
