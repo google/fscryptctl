@@ -84,6 +84,7 @@ static const int padding_values[] = {4, 8, 16, 32};
 enum {
   OPT_ALL_USERS,
   OPT_CONTENTS,
+  OPT_DATA_UNIT_SIZE,
   OPT_DIRECT_KEY,
   OPT_FILENAMES,
   OPT_IV_INO_LBLK_32,
@@ -132,6 +133,8 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "            optimize for UFS inline crypto hardware\n"
       "        --iv-ino-lblk-32\n"
       "            optimize for eMMC inline crypto hardware (not recommended)\n"
+      "        --data-unit-size=<du_size>\n"
+      "            data unit size in bytes (default: filesystem block size)\n"
       "\nNotes:\n"
       "  Keys are identified by 32-character hex strings (key identifiers).\n"
       "\n"
@@ -245,6 +248,18 @@ static int string_to_padding_flag(const char *str) {
     }
   }
   return -1;
+}
+
+static bool parse_data_unit_size(const char *str,
+                                 uint8_t *log2_data_unit_size_ret) {
+  int du_size = atoi(str);
+  int bits = 0;
+
+  while ((1LL << bits) < du_size) {
+    bits++;
+  }
+  *log2_data_unit_size_ret = bits;
+  return du_size > 1 && (1LL << bits) == du_size;
 }
 
 // Converts an array of bytes to hex.  The output string will be
@@ -623,6 +638,7 @@ static int cmd_set_policy(int argc, char *const argv[]) {
   uint8_t filenames_encryption_mode = FSCRYPT_MODE_AES_256_CTS;
   // Default to maximum zero-padding to leak less info about filename lengths.
   uint8_t flags = FSCRYPT_POLICY_FLAGS_PAD_32;
+  uint8_t log2_data_unit_size = 0;
 
   static const struct option set_policy_options[] = {
       {"contents", required_argument, NULL, OPT_CONTENTS},
@@ -631,6 +647,7 @@ static int cmd_set_policy(int argc, char *const argv[]) {
       {"direct-key", no_argument, NULL, OPT_DIRECT_KEY},
       {"iv-ino-lblk-64", no_argument, NULL, OPT_IV_INO_LBLK_64},
       {"iv-ino-lblk-32", no_argument, NULL, OPT_IV_INO_LBLK_32},
+      {"data-unit-size", required_argument, NULL, OPT_DATA_UNIT_SIZE},
       {NULL, 0, NULL, 0}};
 
   int ch, padding_flag;
@@ -667,6 +684,12 @@ static int cmd_set_policy(int argc, char *const argv[]) {
         printf("warning: --iv-ino-lblk-32 should normally not be used\n");
         flags |= FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32;
         break;
+      case OPT_DATA_UNIT_SIZE:
+        if (!parse_data_unit_size(optarg, &log2_data_unit_size)) {
+          fprintf(stderr, "error: invalid data unit size: %s\n", optarg);
+          return EXIT_FAILURE;
+        }
+        break;
       default:
         usage(stderr);
     }
@@ -690,6 +713,7 @@ static int cmd_set_policy(int argc, char *const argv[]) {
   policy.contents_encryption_mode = contents_encryption_mode;
   policy.filenames_encryption_mode = filenames_encryption_mode;
   policy.flags = flags;
+  policy.log2_data_unit_size = log2_data_unit_size;
 
   // Set the encryption policy on the directory.
   if (!set_policy(path, &policy)) {

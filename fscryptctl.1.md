@@ -139,6 +139,10 @@ Options accepted by **fscryptctl set_policy**:
 :   Optimize for eMMC inline encryption hardware.  For details, see the Linux
     kernel documentation for `FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32`.
 
+**\-\-data\-unit\-size**=*DU_SIZE*
+:   Select the crypto data unit size, i.e. the granularity of file contents
+    encryption, in bytes.
+
 # SEE ALSO
 
 * [**fscryptctl** README
