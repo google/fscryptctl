@@ -149,7 +149,8 @@ def describe_policy(path=TEST_DIR, key=TEST_KEY, contents="AES-256-XTS",
     out += "\tMaster key identifier: {}\n".format(key["identifier"])
     out += "\tContents encryption mode: {}\n".format(contents)
     out += "\tFilenames encryption mode: {}\n".format(filenames)
-    out += "\tFlags: {}".format(flags)
+    out += "\tFlags: {}\n".format(flags)
+    out += "\tData unit size: default"
     return out
 
 

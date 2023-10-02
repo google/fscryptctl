@@ -598,6 +598,11 @@ static void show_v2_encryption_policy(const struct fscrypt_policy_v2 *policy) {
   show_encryption_mode(policy->contents_encryption_mode, "Contents");
   show_encryption_mode(policy->filenames_encryption_mode, "Filenames");
   show_policy_flags(policy->flags);
+  if (policy->log2_data_unit_size) {
+    printf("\tData unit size: %u\n", 1U << policy->log2_data_unit_size);
+  } else {
+    printf("\tData unit size: default\n");
+  }
 }
 
 // For a specified file or directory with encryption enabled, print the
