@@ -139,7 +139,8 @@ def directory():
 
 
 def describe_policy(path=TEST_DIR, key=TEST_KEY, contents="AES-256-XTS",
-                    filenames="AES-256-CTS", flags="PAD_32"):
+                    filenames="AES-256-CTS", flags="PAD_32",
+                    data_unit_size="default"):
     """Builds the expected output for a successful invocation of the get_policy
     command.  The arguments specify the settings used in the encryption policy
     as well as the path to the file or directory that has the policy."""
@@ -150,7 +151,7 @@ def describe_policy(path=TEST_DIR, key=TEST_KEY, contents="AES-256-XTS",
     out += "\tContents encryption mode: {}\n".format(contents)
     out += "\tFilenames encryption mode: {}\n".format(filenames)
     out += "\tFlags: {}\n".format(flags)
-    out += "\tData unit size: default"
+    out += "\tData unit size: {}".format(data_unit_size)
     return out
 
 
@@ -305,6 +306,20 @@ def test_set_get_policy_alternate_padding(directory):
     for padding in [4, 8, 16, 32]:
         prepare_encrypted_dir(directory, "--padding={}".format(padding))
         check_policy(directory, flags="PAD_{}".format(padding))
+
+
+def test_set_get_policy_custom_data_unit_size(directory):
+    """Tests getting and setting an encryption policy that uses a custom data
+    unit size."""
+
+    for size in [512, 1024, 2048, 4096, 8192, 16384]:
+        try:
+            prepare_encrypted_dir(directory, "--data-unit-size={}".format(size))
+        except SystemError as e:
+            assert "invalid encryption options provided" in str(e)
+            continue
+
+        check_policy(directory, data_unit_size=size)
 
 
 def test_set_get_policy_aes_256_xts(directory):
@@ -478,6 +493,14 @@ def test_set_policy_bad_mode(directory):
     for mode_type in ["contents", "filenames"]:
         prepare_encrypted_dir(directory, "--{}=foo".format(mode_type),
                               expected_error="error: invalid {} mode: foo".format(mode_type))
+
+
+def test_set_policy_bad_data_unit_size(directory):
+    """Tests that the set_policy command rejects non-power-of-2 data unit
+    sizes."""
+    for size in [0, 100, 1000, 10000, 10000000000000, 'not a number']:
+        prepare_encrypted_dir(directory, "--data-unit-size={}".format(size),
+                              expected_error="error: invalid data unit size: {}".format(size))
 
 
 def test_set_policy_bad_mode_combination(directory):
