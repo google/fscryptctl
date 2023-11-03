@@ -7,7 +7,7 @@
 policies for [Linux filesystem
 encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html),
 specifically the "fscrypt" kernel interface which is supported by the ext4,
-f2fs, and UBIFS filesystems.
+f2fs, UBIFS, and CephFS filesystems.
 
 `fscryptctl` is mainly intended for embedded systems which can't use the
 full-featured [`fscrypt` tool](https://github.com/google/fscrypt), or for
