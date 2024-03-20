@@ -121,6 +121,7 @@ Encryption policy for /mnt/dir:
         Contents encryption mode: AES-256-XTS
         Filenames encryption mode: AES-256-CTS
         Flags: PAD_32
+        Data unit size: default
 
 # Create some files in the encrypted directory.
 > echo foo > /mnt/dir/foo
