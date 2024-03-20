@@ -91,6 +91,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y clang $ALL_DEPENDENCIES
+    - name: Work around https://github.com/actions/runner-images/issues/9491
+      run: sudo sysctl vm.mmap_rnd_bits=28
     - name: Build and test
       run: make test-all CC=clang CFLAGS="$CFLAGS -fsanitize=address -fno-sanitize-recover=address"
 
