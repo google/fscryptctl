@@ -1,5 +1,13 @@
 # fscryptctl release notes
 
+## Version 1.2.0
+
+* `fscryptctl set_policy` now accepts the `--data-unit-size` option.
+
+* `fscryptctl get_policy` now shows the data unit size of the encryption policy.
+
+* Documented that CephFS now supports fscrypt.
+
 ## Version 1.1.0
 
 * Added a manual page for `fscryptctl`.
