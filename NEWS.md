@@ -4,6 +4,9 @@
 
 * `fscryptctl add_key` now supports the `--hw-wrapped-key` option.
 
+* Added new commands `fscryptctl import_hw_wrapped_key`,
+  `fscryptctl generate_hw_wrapped_key`, and `fscryptctl prepare_hw_wrapped_key`.
+
 ## Version 1.2.0
 
 * `fscryptctl set_policy` now accepts the `--data-unit-size` option.

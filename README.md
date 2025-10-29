@@ -29,6 +29,7 @@ For the release notes, see the [NEWS file](NEWS.md).
 - [Runtime Dependencies](#runtime-dependencies)
 - [Features](#features)
 - [Example Usage](#example-usage)
+- [Example Usage with Hardware-Wrapped Key](#example-usage-with-hardware-wrapped-key)
 - [Contributing](#contributing)
 - [Legal](#legal)
 
@@ -72,6 +73,9 @@ tips](https://github.com/google/fscrypt#getting-encryption-not-enabled-on-an-ext
 * `fscryptctl key_status` - get the status of an encryption key on a filesystem
 * `fscryptctl get_policy` - get the encryption policy of a file or directory
 * `fscryptctl set_policy` - set the encryption policy of an empty directory
+* `fscryptctl import_hw_wrapped_key` - import a hardware-wrapped key
+* `fscryptctl generate_hw_wrapped_key` - generate a hardware-wrapped key
+* `fscryptctl prepare_hw_wrapped_key` - prepare a hardware-wrapped key
 
 For full usage details, see the manual page (`man fscryptctl`), or alternatively
 run `fscryptctl --help`.
@@ -153,6 +157,24 @@ bar foo
 > cat /mnt/dir/foo
 foo
 ```
+
+## Example Usage with Hardware-Wrapped Key
+
+On systems that support hardware-wrapped inline encryption keys,
+hardware-wrapped keys can be used instead of raw keys:
+
+```shell
+> mkfs.ext4 -O encrypt,stable_inodes /dev/vdb
+> mount /dev/vdb -o inlinecrypt /mnt
+> head -c 32 /dev/urandom | fscryptctl import_hw_wrapped_key /dev/vdb > /tmp/lt_key
+> fscryptctl prepare_hw_wrapped_key /dev/vdb < /tmp/lt_key | fscryptctl add_key --hw-wrapped-key /mnt
+f12fccad977328d20a16c79627787a1c
+> mkdir /mnt/dir
+> fscryptctl set_policy --iv-ino-lblk-64 f12fccad977328d20a16c79627787a1c /mnt/dir
+```
+
+Hardware-wrapped inline encryption keys require Linux 6.16 or later as well as
+hardware that supports this feature, for example the Qualcomm SM8650 HDK.
 
 ## Contributing
 

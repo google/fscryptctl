@@ -34,6 +34,7 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
+#include "blk-crypto_uapi.h"
 #include "fscrypt_uapi.h"
 
 #ifndef VERSION
@@ -134,6 +135,13 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "  fscryptctl set_policy <key identifier> <directory>\n"
       "    Set up an encryption policy on the specified directory with the\n"
       "    specified key identifier.\n"
+      "  fscryptctl import_hw_wrapped_key <block device>\n"
+      "    Create a hardware-wrapped key by importing a raw key.\n"
+      "  fscryptctl generate_hw_wrapped_key <block device>\n"
+      "    Create a hardware-wrapped key by generating one in hardware.\n"
+      "  fscryptctl prepare_hw_wrapped_key <block device>\n"
+      "    Prepare a hardware-wrapped key to be used by converting it from\n"
+      "    long-term wrapped form to ephemerally-wrapped form.\n"
       "\nOptions:\n"
       "    -h, --help\n"
       "        print this help screen\n"
@@ -778,6 +786,125 @@ static int cmd_set_policy(int argc, char *const argv[]) {
   return EXIT_SUCCESS;
 }
 
+static int cmd_import_hw_wrapped_key(int argc, char *const argv[]) {
+  handle_no_options(&argc, &argv);
+  if (argc != 1) {
+    fputs("error: must specify a single block device\n", stderr);
+    return EXIT_FAILURE;
+  }
+  const char *blkdev = argv[0];
+  int status = EXIT_FAILURE;
+
+  struct blk_crypto_import_key_arg arg = {0};
+  uint8_t *raw_key = xzalloc(FSCRYPT_MAX_KEY_SIZE);
+  uint8_t *lt_key = xzalloc(MAX_WRAPPED_KEY_SIZE);
+  arg.raw_key_ptr = (uintptr_t)raw_key;
+  arg.raw_key_size = read_key(raw_key, FSCRYPT_MAX_KEY_SIZE);
+  if (arg.raw_key_size == 0) {
+    goto cleanup;
+  }
+  arg.lt_key_ptr = (uintptr_t)lt_key;
+  arg.lt_key_size = MAX_WRAPPED_KEY_SIZE;
+
+  int fd = open(blkdev, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    fprintf(stderr, "error: opening %s: %s\n", blkdev, strerror(errno));
+    goto cleanup;
+  }
+  if (ioctl(fd, BLKCRYPTOIMPORTKEY, &arg) != 0) {
+    fprintf(stderr, "error: importing hardware-wrapped key: %s\n",
+            strerror(errno));
+    close(fd);
+    goto cleanup;
+  }
+  close(fd);
+  if (!full_write(STDOUT_FILENO, lt_key, arg.lt_key_size)) {
+    goto cleanup;
+  }
+  status = EXIT_SUCCESS;
+cleanup:
+  wipe_and_free(raw_key, FSCRYPT_MAX_KEY_SIZE);
+  wipe_and_free(lt_key, MAX_WRAPPED_KEY_SIZE);
+  return status;
+}
+
+static int cmd_generate_hw_wrapped_key(int argc, char *const argv[]) {
+  handle_no_options(&argc, &argv);
+  if (argc != 1) {
+    fputs("error: must specify a single block device\n", stderr);
+    return EXIT_FAILURE;
+  }
+  const char *blkdev = argv[0];
+  int status = EXIT_FAILURE;
+
+  struct blk_crypto_generate_key_arg arg = {0};
+  uint8_t *lt_key = xzalloc(MAX_WRAPPED_KEY_SIZE);
+  arg.lt_key_ptr = (uintptr_t)lt_key;
+  arg.lt_key_size = MAX_WRAPPED_KEY_SIZE;
+
+  int fd = open(blkdev, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    fprintf(stderr, "error: opening %s: %s\n", blkdev, strerror(errno));
+    goto cleanup;
+  }
+  if (ioctl(fd, BLKCRYPTOGENERATEKEY, &arg) != 0) {
+    fprintf(stderr, "error: generating hardware-wrapped key: %s\n",
+            strerror(errno));
+    close(fd);
+    goto cleanup;
+  }
+  close(fd);
+  if (!full_write(STDOUT_FILENO, lt_key, arg.lt_key_size)) {
+    goto cleanup;
+  }
+  status = EXIT_SUCCESS;
+cleanup:
+  wipe_and_free(lt_key, MAX_WRAPPED_KEY_SIZE);
+  return status;
+}
+
+static int cmd_prepare_hw_wrapped_key(int argc, char *const argv[]) {
+  handle_no_options(&argc, &argv);
+  if (argc != 1) {
+    fputs("error: must specify a single block device\n", stderr);
+    return EXIT_FAILURE;
+  }
+  const char *blkdev = argv[0];
+  int status = EXIT_FAILURE;
+
+  struct blk_crypto_prepare_key_arg arg = {0};
+  uint8_t *lt_key = xzalloc(MAX_WRAPPED_KEY_SIZE);
+  uint8_t *eph_key = xzalloc(MAX_WRAPPED_KEY_SIZE);
+  arg.lt_key_ptr = (uintptr_t)lt_key;
+  arg.lt_key_size = read_key(lt_key, MAX_WRAPPED_KEY_SIZE);
+  if (arg.lt_key_size == 0) {
+    goto cleanup;
+  }
+  arg.eph_key_ptr = (uintptr_t)eph_key;
+  arg.eph_key_size = MAX_WRAPPED_KEY_SIZE;
+
+  int fd = open(blkdev, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    fprintf(stderr, "error: opening %s: %s\n", blkdev, strerror(errno));
+    goto cleanup;
+  }
+  if (ioctl(fd, BLKCRYPTOPREPAREKEY, &arg) != 0) {
+    fprintf(stderr, "error: preparing hardware-wrapped key: %s\n",
+            strerror(errno));
+    close(fd);
+    goto cleanup;
+  }
+  close(fd);
+  if (!full_write(STDOUT_FILENO, eph_key, arg.eph_key_size)) {
+    goto cleanup;
+  }
+  status = EXIT_SUCCESS;
+cleanup:
+  wipe_and_free(lt_key, MAX_WRAPPED_KEY_SIZE);
+  wipe_and_free(eph_key, MAX_WRAPPED_KEY_SIZE);
+  return status;
+}
+
 // -----------------------------------------------------------------------------
 //                            The main() function
 // -----------------------------------------------------------------------------
@@ -786,9 +913,14 @@ static const struct {
   const char *name;
   int (*func)(int argc, char *const argv[]);
 } commands[] = {
-    {"add_key", cmd_add_key},       {"remove_key", cmd_remove_key},
-    {"key_status", cmd_key_status}, {"get_policy", cmd_get_policy},
+    {"add_key", cmd_add_key},
+    {"remove_key", cmd_remove_key},
+    {"key_status", cmd_key_status},
+    {"get_policy", cmd_get_policy},
     {"set_policy", cmd_set_policy},
+    {"import_hw_wrapped_key", cmd_import_hw_wrapped_key},
+    {"generate_hw_wrapped_key", cmd_generate_hw_wrapped_key},
+    {"prepare_hw_wrapped_key", cmd_prepare_hw_wrapped_key},
 };
 
 int main(int argc, char *const argv[]) {
