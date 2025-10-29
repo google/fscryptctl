@@ -72,4 +72,4 @@ Note: this release of `fscryptctl` only includes support for v1 policies.  For
 v2 policies, users will need to use v1.0.0 or later.
 
 For more information about v1 and v2 encryption policies, see [the Linux kernel
-documentation](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html).
+documentation](https://docs.kernel.org/filesystems/fscrypt.html).

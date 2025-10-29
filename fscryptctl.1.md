@@ -149,7 +149,7 @@ Options accepted by **fscryptctl set_policy**:
   file](https://github.com/google/fscryptctl/blob/master/README.md)
 
 * [Linux kernel documentation for filesystem
-  encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html)
+  encryption](https://docs.kernel.org/filesystems/fscrypt.html)
 
 * [**fscrypt** tool, recommended for most users over
   fscryptctl](https://github.com/google/fscrypt)

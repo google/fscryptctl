@@ -5,9 +5,9 @@
 
 `fscryptctl` is a low-level tool written in C that handles raw keys and manages
 policies for [Linux filesystem
-encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html),
-specifically the "fscrypt" kernel interface which is supported by the ext4,
-f2fs, UBIFS, and CephFS filesystems.
+encryption](https://docs.kernel.org/filesystems/fscrypt.html), specifically the
+"fscrypt" kernel interface which is supported by the ext4, f2fs, UBIFS, and
+CephFS filesystems.
 
 `fscryptctl` is mainly intended for embedded systems which can't use the
 full-featured [`fscrypt` tool](https://github.com/google/fscrypt), or for
@@ -18,8 +18,8 @@ which supports these features and generally is much easier to use.
 
 As `fscryptctl` is intended for advanced users, you should read the [kernel
 documentation for filesystem
-encryption](https://www.kernel.org/doc/html/latest/filesystems/fscrypt.html)
-before using `fscryptctl`.
+encryption](https://docs.kernel.org/filesystems/fscrypt.html) before using
+`fscryptctl`.
 
 For the release notes, see the [NEWS file](NEWS.md).
 
