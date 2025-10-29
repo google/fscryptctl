@@ -28,7 +28,7 @@ PREFIX ?= /usr/local
 # Directory where the binary gets installed
 BINDIR ?= $(PREFIX)/bin
 
-# Direectory where the man page gets installed
+# Directory where the man page gets installed
 MANDIR ?= $(PREFIX)/share/man
 
 # C compiler flags
@@ -108,7 +108,7 @@ test: fscryptctl
 		 python3 -m pytest test.py -s -q
 
 # Depend on test-teardown so that anything already present is cleaned up first.
-test-setup:test-teardown
+test-setup: test-teardown
 	dd if=/dev/zero of="$(TEST_IMAGE)" bs=1M count=32
 	mkfs.ext4 -b 4096 -O encrypt -F "$(TEST_IMAGE)"
 	mkdir -p "$(TEST_DIR)"
