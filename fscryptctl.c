@@ -63,6 +63,13 @@ static void secure_wipe(void *v, size_t n) {
 #endif
 }
 
+static void wipe_and_free(void *v, size_t n) {
+  if (v) {
+    secure_wipe(v, n);
+    free(v);
+  }
+}
+
 // Although the kernel always allows 64-byte keys, it may allow shorter keys
 // too, depending on the encryption mode(s) used.  The shortest key the kernel
 // can ever accept is 16 bytes, which occurs when AES-128-CBC contents
@@ -324,15 +331,15 @@ static ssize_t read_until_limit_or_eof(int fd, uint8_t *buf, size_t limit) {
   return pos;
 }
 
-// Reads a raw key, of size at least FSCRYPT_MIN_KEY_SIZE bytes and at most
-// FSCRYPT_MAX_KEY_SIZE bytes, from standard input into the provided buffer.
-// On success, returns the key size in bytes.  On failure, returns 0.
+// Reads a key, of size at least FSCRYPT_MIN_KEY_SIZE bytes and at most max_size
+// bytes, from standard input into the provided buffer.  On success, returns the
+// key size in bytes.  On failure, returns 0.
 //
 // Note that we use read(STDIN_FILENO) directly rather than fread(stdin), to
 // prevent the key from being copied into the internal buffer of the 'FILE *'.
-static size_t read_key(uint8_t raw_key[FSCRYPT_MAX_KEY_SIZE]) {
-  uint8_t buf[FSCRYPT_MAX_KEY_SIZE + 1];
-  ssize_t ret = read_until_limit_or_eof(STDIN_FILENO, buf, sizeof(buf));
+static size_t read_key(uint8_t *raw_key, size_t max_size) {
+  uint8_t *buf = xzalloc(max_size + 1);
+  ssize_t ret = read_until_limit_or_eof(STDIN_FILENO, buf, max_size + 1);
   if (ret < 0) {
     fprintf(stderr, "error: reading from stdin: %s\n", strerror(errno));
     ret = 0;
@@ -344,15 +351,15 @@ static size_t read_key(uint8_t raw_key[FSCRYPT_MAX_KEY_SIZE]) {
     ret = 0;
     goto cleanup;
   }
-  if (ret > FSCRYPT_MAX_KEY_SIZE) {
-    fprintf(stderr, "error: key was too long; it can be at most %d bytes\n",
-            FSCRYPT_MAX_KEY_SIZE);
+  if ((size_t)ret > max_size) {
+    fprintf(stderr, "error: key was too long; it can be at most %zu bytes\n",
+            max_size);
     ret = 0;
     goto cleanup;
   }
   memcpy(raw_key, buf, ret);
 cleanup:
-  secure_wipe(buf, sizeof(buf));
+  wipe_and_free(buf, max_size + 1);
   return ret;
 }
 
@@ -410,7 +417,7 @@ static int cmd_add_key(int argc, char *const argv[]) {
   struct fscrypt_add_key_arg *arg =
       xzalloc(sizeof(*arg) + FSCRYPT_MAX_KEY_SIZE);
   int status = EXIT_FAILURE;
-  arg->raw_size = read_key(arg->raw);
+  arg->raw_size = read_key(arg->raw, FSCRYPT_MAX_KEY_SIZE);
   if (arg->raw_size == 0) {
     goto cleanup;
   }
