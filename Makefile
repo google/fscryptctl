@@ -67,8 +67,8 @@ fscryptctl.1: fscryptctl.1.md
 
 ##############################################################################
 
-# Don't format fscrypt_uapi.h, so that it stays identical to the kernel version.
-FILES_TO_FORMAT := $(filter-out fscrypt_uapi.h, $(SRC) $(HDRS))
+# Don't format UAPI files.  They should stay identical to the kernel's copies.
+FILES_TO_FORMAT := $(filter-out %_uapi.h, $(SRC) $(HDRS))
 
 .PHONY: format format-check
 format:
