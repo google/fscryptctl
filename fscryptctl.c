@@ -363,6 +363,19 @@ cleanup:
   return ret;
 }
 
+static bool full_write(int fd, const uint8_t *buf, size_t size) {
+  while (size) {
+    ssize_t ret = write(fd, buf, size);
+    if (ret < 0) {
+      fprintf(stderr, "error: writing output: %s\n", strerror(errno));
+      return false;
+    }
+    buf += ret;
+    size -= ret;
+  }
+  return true;
+}
+
 static bool get_policy(const char *path,
                        struct fscrypt_get_policy_ex_arg *arg) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
