@@ -43,6 +43,15 @@
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
+static void *xzalloc(size_t size) {
+  void *ptr = calloc(1, size);
+  if (!ptr) {
+    fprintf(stderr, "error: out of memory\n");
+    exit(EXIT_FAILURE);
+  }
+  return ptr;
+}
+
 static void secure_wipe(void *v, size_t n) {
 #ifdef explicit_bzero
   explicit_bzero(v, n);
@@ -399,12 +408,7 @@ static int cmd_add_key(int argc, char *const argv[]) {
   const char *mountpoint = argv[0];
 
   struct fscrypt_add_key_arg *arg =
-      calloc(sizeof(*arg) + FSCRYPT_MAX_KEY_SIZE, 1);
-  if (!arg) {
-    fputs("error: failed to allocate memory\n", stderr);
-    return EXIT_FAILURE;
-  }
-
+      xzalloc(sizeof(*arg) + FSCRYPT_MAX_KEY_SIZE);
   int status = EXIT_FAILURE;
   arg->raw_size = read_key(arg->raw);
   if (arg->raw_size == 0) {
