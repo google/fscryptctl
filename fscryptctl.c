@@ -41,6 +41,11 @@
 #define VERSION "v1.2.0"
 #endif
 
+// This matches the limit used by the kernel internally as of Linux 6.16.  There
+// isn't much reason to think that a wrapped key would ever be larger than this,
+// but it can be increased if ever needed.
+#define MAX_WRAPPED_KEY_SIZE 128
+
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
 static void *xzalloc(size_t size) {
@@ -103,6 +108,7 @@ enum {
   OPT_DATA_UNIT_SIZE,
   OPT_DIRECT_KEY,
   OPT_FILENAMES,
+  OPT_HW_WRAPPED_KEY,
   OPT_IV_INO_LBLK_32,
   OPT_IV_INO_LBLK_64,
   OPT_PADDING,
@@ -133,6 +139,9 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "        print this help screen\n"
       "    -v, --version\n"
       "        print the version of fscryptctl\n"
+      "    add_key\n"
+      "        --hw-wrapped-key\n"
+      "            add a hardware-wrapped key (rather than a raw key)\n"
       "    remove_key\n"
       "        --all-users\n"
       "            force-remove all users' claims to the key (requires root)\n"
@@ -154,7 +163,7 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "\nNotes:\n"
       "  Keys are identified by 32-character hex strings (key identifiers).\n"
       "\n"
-      "  Raw keys are given on stdin in binary and usually must be 64 bytes.\n"
+      "  Keys are given on stdin in raw binary.\n"
       "\n"
       "  For more information, run `man fscryptctl`.\n",
       out);
@@ -420,20 +429,38 @@ static bool set_policy(const char *path,
 // -----------------------------------------------------------------------------
 
 static int cmd_add_key(int argc, char *const argv[]) {
-  handle_no_options(&argc, &argv);
+  static const struct option add_key_options[] = {
+      {"hw-wrapped-key", no_argument, NULL, OPT_HW_WRAPPED_KEY},
+      {NULL, 0, NULL, 0}};
+  int max_size = FSCRYPT_MAX_KEY_SIZE;
+  __u32 flags = 0;
+
+  int ch;
+  while ((ch = getopt_long(argc, argv, "", add_key_options, NULL)) != -1) {
+    switch (ch) {
+      case OPT_HW_WRAPPED_KEY:
+        flags |= FSCRYPT_ADD_KEY_FLAG_HW_WRAPPED;
+        max_size = MAX_WRAPPED_KEY_SIZE;
+        break;
+      default:
+        usage(stderr);
+    }
+  }
+  argc -= optind;
+  argv += optind;
   if (argc != 1) {
     fputs("error: must specify a single mountpoint\n", stderr);
     return EXIT_FAILURE;
   }
   const char *mountpoint = argv[0];
 
-  struct fscrypt_add_key_arg *arg =
-      xzalloc(sizeof(*arg) + FSCRYPT_MAX_KEY_SIZE);
+  struct fscrypt_add_key_arg *arg = xzalloc(sizeof(*arg) + max_size);
   int status = EXIT_FAILURE;
-  arg->raw_size = read_key(arg->raw, FSCRYPT_MAX_KEY_SIZE);
+  arg->raw_size = read_key(arg->raw, max_size);
   if (arg->raw_size == 0) {
     goto cleanup;
   }
+  arg->flags = flags;
   arg->key_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
 
   int fd = open(mountpoint, O_RDONLY | O_CLOEXEC);
@@ -455,8 +482,7 @@ static int cmd_add_key(int argc, char *const argv[]) {
   puts(identifier_hex);
   status = EXIT_SUCCESS;
 cleanup:
-  secure_wipe(arg->raw, arg->raw_size);
-  free(arg);
+  wipe_and_free(arg, sizeof(*arg) + max_size);
   return status;
 }
 

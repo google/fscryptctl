@@ -1,5 +1,9 @@
 # fscryptctl release notes
 
+## Version 1.3.0
+
+* `fscryptctl add_key` now supports the `--hw-wrapped-key` option.
+
 ## Version 1.2.0
 
 * `fscryptctl set_policy` now accepts the `--data-unit-size` option.
