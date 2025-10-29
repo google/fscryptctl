@@ -116,7 +116,7 @@ static void __attribute__((__noreturn__)) usage(FILE *out) {
       "    -h, --help\n"
       "        print this help screen\n"
       "    -v, --version\n"
-      "        print the version of fscrypt\n"
+      "        print the version of fscryptctl\n"
       "    remove_key\n"
       "        --all-users\n"
       "            force-remove all users' claims to the key (requires root)\n"
