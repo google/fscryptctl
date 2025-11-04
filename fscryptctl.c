@@ -39,7 +39,7 @@
 
 #ifndef VERSION
 // Update this on each new release, along with the NEWS.md file.
-#define VERSION "v1.2.0"
+#define VERSION "v1.3.0"
 #endif
 
 // This matches the limit used by the kernel internally as of Linux 6.16.  There
